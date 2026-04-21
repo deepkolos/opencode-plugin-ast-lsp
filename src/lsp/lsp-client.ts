@@ -125,4 +125,13 @@ export class LSPClient extends LSPClientConnection {
       newName,
     })
   }
+
+  async hover(filePath: string, line: number, character: number): Promise<unknown> {
+    const absPath = resolve(filePath)
+    await this.openFile(absPath)
+    return this.sendRequest("textDocument/hover", {
+      textDocument: { uri: pathToFileURL(absPath).href },
+      position: { line: line - 1, character },
+    })
+  }
 }

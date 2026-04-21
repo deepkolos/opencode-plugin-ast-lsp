@@ -56,6 +56,18 @@ export interface TextDocumentIdentifier {
   uri: string
 }
 
+export interface MarkupContent {
+  kind: "plaintext" | "markdown"
+  value: string
+}
+
+export type MarkedString = string | { language: string; value: string }
+
+export interface Hover {
+  contents: MarkupContent | MarkedString | MarkedString[]
+  range?: Range
+}
+
 export interface VersionedTextDocumentIdentifier extends TextDocumentIdentifier {
   version: number | null
 }

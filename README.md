@@ -29,6 +29,7 @@ bun run build
 - `lsp_diagnostics`: 获取语言服务器的诊断信息（错误、警告等）
 - `lsp_prepare_rename`: 检查重命名是否有效
 - `lsp_rename`: 跨工作区重命名符号
+- `lsp_hover`: 获取符号的悬停提示信息（类型定义、文档注释等）
 
 ## 语言支持
 

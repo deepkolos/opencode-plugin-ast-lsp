@@ -8,6 +8,7 @@ import {
   lsp_diagnostics,
   lsp_prepare_rename,
   lsp_rename,
+  lsp_hover,
 } from "./lsp"
 
 import { setPluginInput } from "./shared/plugin-context"
@@ -24,6 +25,7 @@ const plugin: Plugin = async (input: PluginInput) => {
       lsp_diagnostics,
       lsp_prepare_rename,
       lsp_rename,
+      lsp_hover,
     },
   }
 }

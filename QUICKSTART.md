@@ -66,6 +66,15 @@ go install golang.org/x/tools/gopls@latest
   - character: 5
 ```
 
+### 获取悬停提示（类型/文档）
+
+```
+使用 lsp_hover
+  - filePath: "src/index.ts"
+  - line: 10
+  - character: 5
+```
+
 ### 检查错误
 
 ```

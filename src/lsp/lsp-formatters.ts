@@ -10,6 +10,9 @@ import type {
   SymbolInfo,
   TextEdit,
   WorkspaceEdit,
+  Hover,
+  MarkupContent,
+  MarkedString,
 } from "./types"
 
 export function formatLocation(loc: Location | LocationLink): string {
@@ -170,4 +173,37 @@ export function formatWorkspaceEdit(edit: WorkspaceEdit | null): string {
   if (lines.length === 0) return "No changes"
 
   return lines.join("\n")
+}
+
+export function formatHover(hover: Hover | null): string {
+  if (!hover) return "No hover information found"
+
+  const parts: string[] = []
+
+  const addMarkedString = (ms: MarkedString) => {
+    if (typeof ms === "string") {
+      parts.push(ms)
+    } else if (ms.language) {
+      parts.push(`\`\`\`${ms.language}\n${ms.value}\n\`\`\``)
+    } else {
+      parts.push(ms.value)
+    }
+  }
+
+  if (typeof hover.contents === "string") {
+    parts.push(hover.contents)
+  } else if (Array.isArray(hover.contents)) {
+    for (const item of hover.contents) {
+      addMarkedString(item)
+    }
+  } else if (typeof hover.contents === "object") {
+    if ("kind" in hover.contents && "value" in hover.contents) {
+      parts.push((hover.contents as MarkupContent).value)
+    } else {
+      addMarkedString(hover.contents as MarkedString)
+    }
+  }
+
+  const result = parts.join("\n\n").trim()
+  return result || "No hover information found"
 }

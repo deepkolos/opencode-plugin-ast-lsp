@@ -6,6 +6,7 @@ import { delimiter, dirname, join } from "path"
 import { lsp_diagnostics } from "../src/lsp/diagnostics-tool"
 import { lsp_find_references } from "../src/lsp/find-references-tool"
 import { lsp_goto_definition } from "../src/lsp/goto-definition-tool"
+import { lsp_hover } from "../src/lsp/hover-tool"
 import { lsp_prepare_rename, lsp_rename } from "../src/lsp/rename-tools"
 import { lsp_symbols } from "../src/lsp/symbols-tool"
 import { lspManager } from "../src/lsp/lsp-server"
@@ -67,6 +68,10 @@ function createTsProject() {
     root,
     "src/defs.ts",
     [
+      "/**",
+      " * Greets a person",
+      " * @param name The name of the person",
+      " */",
       "export function greet(name: string): string {",
       "  return `hi ${name}`",
       "}",
@@ -158,6 +163,22 @@ describe("lsp tools", () => {
     )
 
     expect(output).toContain("entry (Function)")
+  })
+
+  it("uses real lsp_hover to get documentation", async () => {
+    const { indexPath } = createTsProject()
+    const source = readFileSync(indexPath, "utf-8")
+    const position = findPosition(source, 'greet("world")')
+
+    const output = asText(
+      await lsp_hover.execute(
+        { filePath: indexPath, line: position.line, character: position.character },
+        {} as never,
+      ),
+    )
+
+    expect(output).toContain("greet(name: string): string")
+    expect(output).toContain("Greets a person")
   })
 
   it("uses real lsp_diagnostics for directory diagnostics", async () => {
