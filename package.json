@@ -1,0 +1,27 @@
+{
+  "name": "opencode-plugin-ast-lsp",
+  "version": "0.0.0",
+  "author": "",
+  "main": "dist/index.js",
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.4.0",
+    "vscode-jsonrpc": "^8.2.0"
+  },
+  "devDependencies": {
+    "bun-types": "1.3.11",
+    "typescript": "^6.0.3",
+    "typescript-language-server": "^5.1.3",
+    "vscode-langservers-extracted": "^4.10.0"
+  },
+  "description": "Standalone OpenCode plugin providing AST-grep and LSP tools",
+  "files": ["dist"],
+  "keywords": ["opencode", "plugin", "ast-grep", "lsp"],
+  "license": "MIT",
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly",
+    "clean": "rm -rf dist",
+    "test": "bun test"
+  },
+  "type": "module",
+  "types": "dist/index.d.ts"
+}
