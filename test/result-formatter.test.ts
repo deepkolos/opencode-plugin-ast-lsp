@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test"
 
 import { formatReplaceResult, formatSearchResult } from "../src/ast-grep/result-formatter"
+import { formatLocation } from "../src/lsp/lsp-formatters"
 import type { CliMatch, SgResult } from "../src/ast-grep/types"
+import type { Location } from "../src/lsp/types"
 
 function createMatch(overrides: Partial<CliMatch> = {}): CliMatch {
   return {
@@ -88,5 +90,33 @@ describe("formatReplaceResult", () => {
     expect(output).toContain("[TRUNCATED] Results truncated (search timed out)")
     expect(output).toContain("1 replacement(s):")
     expect(output).not.toContain("Use dryRun=false to apply changes")
+  })
+})
+
+describe("formatLocation", () => {
+  it("formats LSP location and decodes URL encoded paths", () => {
+    const loc: Location = {
+      uri: "file:///Users/workspace/node_modules/%40sar-engine/core/es/ecs/script.d.ts",
+      range: {
+        start: { line: 62, character: 0 },
+        end: { line: 62, character: 10 },
+      },
+    }
+
+    const formatted = formatLocation(loc)
+    expect(formatted).toBe("/Users/workspace/node_modules/@sar-engine/core/es/ecs/script.d.ts:63:0")
+  })
+
+  it("handles non-file URIs without stripping the protocol", () => {
+    const loc: Location = {
+      uri: "untitled:Untitled-1",
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+    }
+
+    const formatted = formatLocation(loc)
+    expect(formatted).toBe("untitled:Untitled-1:1:0")
   })
 })

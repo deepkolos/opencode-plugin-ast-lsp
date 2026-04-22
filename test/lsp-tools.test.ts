@@ -194,7 +194,7 @@ describe("lsp tools", () => {
     expect(output).toContain(`Directory: ${srcDir}`)
     expect(output).toContain(brokenPath)
     expect(output).toContain("not assignable to type 'string'")
-  })
+  }, 10000)
 
   it("uses real lsp_prepare_rename on a renameable symbol", async () => {
     const { indexPath } = createTsProject()

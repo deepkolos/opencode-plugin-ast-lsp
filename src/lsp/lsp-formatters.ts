@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url"
+
 import { SYMBOL_KIND_MAP, SEVERITY_MAP } from "./language-mappings"
 import type {
   Diagnostic,
@@ -18,14 +20,14 @@ import type {
 export function formatLocation(loc: Location | LocationLink): string {
   if ("targetUri" in loc) {
     const uri = loc.targetUri
-    const filePath = uri.startsWith("file://") ? uri.substring(7) : uri
+    const filePath = uri.startsWith("file://") ? fileURLToPath(uri) : uri
     const line = loc.targetRange.start.line + 1
     const char = loc.targetRange.start.character
     return `${filePath}:${line}:${char}`
   }
 
   const uri = loc.uri
-  const filePath = uri.startsWith("file://") ? uri.substring(7) : uri
+  const filePath = uri.startsWith("file://") ? fileURLToPath(uri) : uri
   const line = loc.range.start.line + 1
   const char = loc.range.start.character
   return `${filePath}:${line}:${char}`
@@ -138,7 +140,7 @@ export function formatWorkspaceEdit(edit: WorkspaceEdit | null): string {
 
   if (edit.changes) {
     for (const [uri, edits] of Object.entries(edit.changes)) {
-      const filePath = uri.startsWith("file://") ? uri.substring(7) : uri
+      const filePath = uri.startsWith("file://") ? fileURLToPath(uri) : uri
       lines.push(`File: ${filePath}`)
       for (const textEdit of edits) {
         lines.push(formatTextEdit(textEdit))
@@ -150,18 +152,18 @@ export function formatWorkspaceEdit(edit: WorkspaceEdit | null): string {
     for (const change of edit.documentChanges) {
       if ("kind" in change) {
         if (change.kind === "create") {
-          const filePath = change.uri.startsWith("file://") ? change.uri.substring(7) : change.uri
+          const filePath = change.uri.startsWith("file://") ? fileURLToPath(change.uri) : change.uri
           lines.push(`Create: ${filePath}`)
         } else if (change.kind === "rename") {
-          const oldPath = change.oldUri.startsWith("file://") ? change.oldUri.substring(7) : change.oldUri
-          const newPath = change.newUri.startsWith("file://") ? change.newUri.substring(7) : change.newUri
+          const oldPath = change.oldUri.startsWith("file://") ? fileURLToPath(change.oldUri) : change.oldUri
+          const newPath = change.newUri.startsWith("file://") ? fileURLToPath(change.newUri) : change.newUri
           lines.push(`Rename: ${oldPath} -> ${newPath}`)
         } else if (change.kind === "delete") {
-          const filePath = change.uri.startsWith("file://") ? change.uri.substring(7) : change.uri
+          const filePath = change.uri.startsWith("file://") ? fileURLToPath(change.uri) : change.uri
           lines.push(`Delete: ${filePath}`)
         }
       } else {
-        const filePath = change.textDocument.uri.startsWith("file://") ? change.textDocument.uri.substring(7) : change.textDocument.uri
+        const filePath = change.textDocument.uri.startsWith("file://") ? fileURLToPath(change.textDocument.uri) : change.textDocument.uri
         lines.push(`File: ${filePath}`)
         for (const textEdit of change.edits) {
           lines.push(formatTextEdit(textEdit))
