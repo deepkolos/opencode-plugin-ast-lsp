@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-ast-lsp",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "author": "",
   "main": "dist/index.js",
   "dependencies": {
