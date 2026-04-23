@@ -42,7 +42,8 @@ export function createAstGrepTools(ctx: PluginInput): Record<string, ToolDefinit
       "Use meta-variables: $VAR (single node), $$$ (multiple nodes). " +
       "IMPORTANT: Patterns must be complete AST nodes (valid code). " +
       "For functions, include params and body: 'export async function $NAME($$$) { $$$ }' not 'export async function $NAME'. " +
-      "Examples: 'console.log($MSG)', 'def $FUNC($$$):', 'async function $NAME($$$)'",
+      "Examples: 'console.log($MSG)', 'def $FUNC($$$):', 'async function $NAME($$$)'. " +
+      "For listing npm package exports or locating a symbol declaration inside an installed package, prefer lsp_package_exports / lsp_package_symbol.",
     args: {
       pattern: tool.schema.string().describe("AST pattern with meta-variables ($VAR, $$$). Must be complete AST node."),
       lang: tool.schema.enum(CLI_LANGUAGES).describe("Target language"),

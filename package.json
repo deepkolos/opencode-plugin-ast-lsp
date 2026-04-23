@@ -25,7 +25,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly",
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external typescript && tsc --emitDeclarationOnly",
     "clean": "rm -rf dist",
     "test": "bun test"
   },

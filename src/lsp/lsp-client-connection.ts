@@ -17,6 +17,13 @@ export class LSPClientConnection extends LSPClientTransport {
           references: {},
           documentSymbol: { hierarchicalDocumentSymbolSupport: true },
           publishDiagnostics: {},
+          completion: {
+            completionItem: {
+              snippetSupport: false,
+              resolveSupport: { properties: ["documentation", "detail", "additionalTextEdits"] },
+            },
+            contextSupport: true,
+          },
           rename: {
             prepareSupport: true,
             prepareSupportDefaultBehavior: 1,

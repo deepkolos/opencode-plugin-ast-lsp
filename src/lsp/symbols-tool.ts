@@ -6,7 +6,13 @@ import { withLspClient } from "./lsp-client-wrapper"
 import type { DocumentSymbol, SymbolInfo } from "./types"
 
 export const lsp_symbols: ToolDefinition = tool({
-  description: "Get symbols from file (document) or search across workspace. Use scope='document' for file outline, scope='workspace' for project-wide symbol search.",
+  description:
+    "List symbols either as a FILE outline (classes/functions/methods hierarchy) or as a WORKSPACE fuzzy search by name. " +
+    "Use scope='document' when: 'outline this file', 'what are the public methods of this class?'. " +
+    "Use scope='workspace' when: 'find a class called UserService somewhere in the project'. " +
+    "Not for: enumerating exports of an npm package (use lsp_package_exports), " +
+    "locating a symbol inside node_modules by package (use lsp_package_symbol), " +
+    "or structural code search by pattern (use ast_grep_search).",
   args: {
     filePath: tool.schema.string().describe("File path for LSP context"),
     scope: tool.schema

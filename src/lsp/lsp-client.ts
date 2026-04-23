@@ -134,4 +134,62 @@ export class LSPClient extends LSPClientConnection {
       position: { line: line - 1, character },
     })
   }
+
+  async completion(
+    filePath: string,
+    line: number,
+    character: number,
+    triggerKind?: number,
+    triggerCharacter?: string,
+  ): Promise<unknown> {
+    const absPath = resolve(filePath)
+    await this.openFile(absPath)
+    const params: Record<string, unknown> = {
+      textDocument: { uri: pathToFileURL(absPath).href },
+      position: { line: line - 1, character },
+    }
+    if (triggerKind != null) {
+      params.context = {
+        triggerKind,
+        ...(triggerCharacter ? { triggerCharacter } : {}),
+      }
+    }
+    return this.sendRequest("textDocument/completion", params)
+  }
+
+  async resolveCompletionItem(item: unknown): Promise<unknown> {
+    return this.sendRequest("completionItem/resolve", item)
+  }
+
+  async applyInMemoryEdit(filePath: string, newText: string): Promise<void> {
+    const absPath = resolve(filePath)
+    await this.openFile(absPath)
+    const uri = pathToFileURL(absPath).href
+    const nextVersion = (this.documentVersions.get(uri) ?? 1) + 1
+    this.documentVersions.set(uri, nextVersion)
+    this.lastSyncedText.set(uri, newText)
+    this.sendNotification("textDocument/didChange", {
+      textDocument: { uri, version: nextVersion },
+      contentChanges: [{ text: newText }],
+    })
+    await new Promise((r) => setTimeout(r, 200))
+  }
+
+  async revertInMemoryEdit(filePath: string): Promise<void> {
+    const absPath = resolve(filePath)
+    const uri = pathToFileURL(absPath).href
+    let original = ""
+    try {
+      original = readFileSync(absPath, "utf-8")
+    } catch {
+      return
+    }
+    const nextVersion = (this.documentVersions.get(uri) ?? 1) + 1
+    this.documentVersions.set(uri, nextVersion)
+    this.lastSyncedText.set(uri, original)
+    this.sendNotification("textDocument/didChange", {
+      textDocument: { uri, version: nextVersion },
+      contentChanges: [{ text: original }],
+    })
+  }
 }

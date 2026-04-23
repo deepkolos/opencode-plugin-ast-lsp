@@ -10,7 +10,12 @@ import { isDirectoryPath, withLspClient } from "./lsp-client-wrapper"
 import type { Diagnostic } from "./types"
 
 export const lsp_diagnostics: ToolDefinition = tool({
-  description: "Get errors, warnings, hints from language server BEFORE running build. Works for both single files and directories.",
+  description:
+    "Fetch type-checker / linter diagnostics (errors, warnings, hints) for a file or a directory before building. " +
+    "Use when: 'type-check this file', 'any errors under src/?', 'validate my change compiles'. " +
+    "Accepts a directory and aggregates diagnostics for all supported source files under it. " +
+    "Not for: inspecting installed packages (.d.ts inside node_modules rarely has actionable diagnostics; use lsp_package_exports / lsp_package_symbol to explore APIs instead), " +
+    "or running build scripts / tests (use a shell command instead).",
   args: {
     filePath: tool.schema.string().describe("File or directory path to check diagnostics for"),
     severity: tool.schema

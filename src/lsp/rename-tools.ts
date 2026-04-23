@@ -6,7 +6,10 @@ import { applyWorkspaceEdit } from "./workspace-edit"
 import type { PrepareRenameDefaultBehavior, PrepareRenameResult, WorkspaceEdit } from "./types"
 
 export const lsp_prepare_rename: ToolDefinition = tool({
-  description: "Check if rename is valid. Use BEFORE lsp_rename.",
+  description:
+    "Pre-flight check BEFORE lsp_rename to confirm the symbol at the given position is renameable and preview its range. " +
+    "Use when: about to perform a safe semantic rename and want to verify the cursor is on a valid identifier. " +
+    "Not for: simple text substitution (use ast_grep_replace), or renaming symbols declared inside installed packages / node_modules (would pollute dependencies).",
   args: {
     filePath: tool.schema.string(),
     line: tool.schema.number().min(1).describe("1-based"),
@@ -28,7 +31,13 @@ export const lsp_prepare_rename: ToolDefinition = tool({
 })
 
 export const lsp_rename: ToolDefinition = tool({
-  description: "Rename symbol across entire workspace. APPLIES changes to all files.",
+  description:
+    "Perform a semantic rename of a symbol across the entire workspace and APPLY edits to all affected files. " +
+    "Respects imports, exports, re-exports, and alias references — far safer than textual find-and-replace. " +
+    "Use when: 'rename this function/class/variable project-wide safely'. " +
+    "Prefer running lsp_prepare_rename first to validate the position. " +
+    "Not for: renaming symbols inside installed packages / node_modules (would pollute dependencies and may miss files tsserver doesn't index), " +
+    "or literal string substitution (use ast_grep_replace for structural rewrites).",
   args: {
     filePath: tool.schema.string(),
     line: tool.schema.number().min(1).describe("1-based"),
