@@ -68,7 +68,17 @@ describe("lsp_hover by packageName", () => {
     writeFixturePackage(
       root,
       "@fixture/hover",
-      `export class Texture2D {\n  width: number;\n  height: number;\n}\n`,
+      [
+        "/**",
+        " * Main texture type.",
+        " * @deprecated Use NewTexture2D.",
+        " */",
+        "export class Texture2D {",
+        "  width: number;",
+        "  height: number;",
+        "}",
+        "",
+      ].join("\n"),
     )
 
     const output = asText(
@@ -83,8 +93,14 @@ describe("lsp_hover by packageName", () => {
     )
 
     expect(output).toContain("@fixture/hover :: Texture2D")
-    expect(output).toContain("File:")
-    expect(output).toContain("index.d.ts")
+    expect(output).toContain("Source: @fixture/hover/index.d.ts")
+    expect(output).toContain("Definition: @fixture/hover/index.d.ts")
+    expect(output).toContain("Signature:")
+    expect(output).toContain("Documentation:")
+    expect(output).toContain("Main texture type.")
+    expect(output).toContain("Tags:")
+    expect(output).toContain("@deprecated")
+    expect(output).toContain("NewTexture2D")
   }, 20000)
 
   it("returns friendly message when symbol is missing", async () => {
@@ -138,6 +154,7 @@ describe("lsp_hover by packageName", () => {
 
     expect(output).toContain("@multi/a :: Shared")
     expect(output).toContain("@multi/b :: Shared")
+    expect(output).toContain("Signature:")
   }, 30000)
 
   it("keeps backward compatibility with filePath + line + character", async () => {
@@ -175,5 +192,10 @@ describe("lsp_hover by packageName", () => {
     )
 
     expect(output).toContain("greet")
+    expect(output).toContain(`Source: ${indexPath}:8:1`)
+    expect(output).toContain(`Definition: ${indexPath}:4:`)
+    expect(output).toContain("Signature:")
+    expect(output).toContain("Documentation:")
+    expect(output).toContain("Greets")
   }, 20000)
 })

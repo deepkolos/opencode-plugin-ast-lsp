@@ -1,13 +1,39 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
-import { formatHover } from "./lsp-formatters"
+import { formatHover, formatLocation } from "./lsp-formatters"
 import { withLspClient } from "./lsp-client-wrapper"
 import {
   resolvePackageSymbolLocations,
   toWorkspaceRoot,
+  toNodeModulesRelativePath,
 } from "./package-resolution"
 import { ensureLspServersInstalled } from "./server-auto-installer"
-import type { Hover } from "./types"
+import type { Hover, Location, LocationLink } from "./types"
+
+function firstDefinitionLocation(
+  definition: unknown,
+): Location | LocationLink | null {
+  if (!definition) return null
+  if (Array.isArray(definition)) {
+    return (definition[0] as Location | LocationLink | undefined) ?? null
+  }
+  return definition as Location | LocationLink
+}
+
+function formatHoverBlock(
+  hover: Hover | null,
+  opts: {
+    source?: string
+    definition?: string
+  } = {},
+): string {
+  const lines: string[] = []
+  if (opts.source) lines.push(`Source: ${opts.source}`)
+  if (opts.definition) lines.push(`Definition: ${opts.definition}`)
+  lines.push("---")
+  lines.push(formatHover(hover))
+  return lines.join("\n")
+}
 
 export const lsp_hover: ToolDefinition = tool({
   description:
@@ -66,20 +92,22 @@ export const lsp_hover: ToolDefinition = tool({
         for (const loc of locations) {
           try {
             const hover = await withLspClient(loc.filePath, async (client) => {
-              return (await client.hover(loc.filePath, loc.line, loc.character)) as
-                | Hover
-                | null
+              return (await client.hover(loc.filePath, loc.line, loc.character)) as Hover | null
             })
-            const body = formatHover(hover)
+            const source = loc.nodeModulesRoot
+              ? toNodeModulesRelativePath(loc.filePath, loc.nodeModulesRoot)
+              : loc.filePath
             blocks.push(
               `${loc.pkg} :: ${args.symbolName}\n` +
-                `File: ${loc.filePath}:${loc.line}:${loc.character}\n` +
-                `---\n${body}`,
+                formatHoverBlock(hover, {
+                  source: `${source}:${loc.line}:${loc.character}`,
+                  definition: `${source}:${loc.line}:${loc.character}`,
+                }),
             )
           } catch (e) {
             blocks.push(
               `${loc.pkg} :: ${args.symbolName}\n` +
-                `File: ${loc.filePath}:${loc.line}:${loc.character}\n` +
+                `Source: ${loc.filePath}:${loc.line}:${loc.character}\n` +
                 `---\nError: ${e instanceof Error ? e.message : String(e)}`,
             )
           }
@@ -94,10 +122,17 @@ export const lsp_hover: ToolDefinition = tool({
       }
 
       const result = await withLspClient(args.filePath, async (client) => {
-        return (await client.hover(args.filePath!, args.line!, args.character!)) as Hover | null
+        const hover = (await client.hover(args.filePath!, args.line!, args.character!)) as Hover | null
+        const definition = firstDefinitionLocation(
+          await client.definition(args.filePath!, args.line!, args.character!),
+        )
+        return { hover, definition }
       })
 
-      return formatHover(result)
+      return formatHoverBlock(result.hover, {
+        source: `${args.filePath}:${args.line}:${args.character}`,
+        definition: result.definition ? formatLocation(result.definition) : undefined,
+      })
     } catch (e) {
       return `Error: ${e instanceof Error ? e.message : String(e)}`
     }

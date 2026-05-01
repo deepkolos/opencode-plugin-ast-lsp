@@ -177,35 +177,133 @@ export function formatWorkspaceEdit(edit: WorkspaceEdit | null): string {
   return lines.join("\n")
 }
 
+function formatRange(range: Range): string {
+  const startLine = range.start.line + 1
+  const startChar = range.start.character
+  const endLine = range.end.line + 1
+  const endChar = range.end.character
+  return `${startLine}:${startChar}-${endLine}:${endChar}`
+}
+
+function pushUnique(target: string[], value: string): void {
+  const normalized = value.trim()
+  if (!normalized) return
+  if (!target.includes(normalized)) target.push(normalized)
+}
+
+function collectMarkdownSections(
+  value: string,
+  signatures: string[],
+  docs: string[],
+  tags: string[],
+): void {
+  const codeBlockRe = /```[^\n]*\n[\s\S]*?\n```/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = codeBlockRe.exec(value))) {
+    const before = value.slice(lastIndex, match.index)
+    collectPlainTextSections(before, docs, tags)
+    pushUnique(signatures, match[0])
+    lastIndex = match.index + match[0].length
+  }
+
+  const tail = value.slice(lastIndex)
+  collectPlainTextSections(tail, docs, tags)
+}
+
+function collectPlainTextSections(
+  value: string,
+  docs: string[],
+  tags: string[],
+): void {
+  const lines = value
+    .split("\n")
+    .map((line) => line.trimEnd())
+
+  const docBuffer: string[] = []
+  const tagBuffer: string[] = []
+
+  const flushDoc = () => {
+    const text = docBuffer.join("\n").trim()
+    if (text) pushUnique(docs, text)
+    docBuffer.length = 0
+  }
+
+  const flushTags = () => {
+    const text = tagBuffer.join("\n").trim()
+    if (text) pushUnique(tags, text)
+    tagBuffer.length = 0
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    const normalizedForTag = line
+      .replace(/^[*-]\s*/, "")
+      .replace(/\*/g, "")
+    if (!line) {
+      flushDoc()
+      flushTags()
+      continue
+    }
+    if (normalizedForTag.startsWith("@")) {
+      flushDoc()
+      tagBuffer.push(normalizedForTag)
+      continue
+    }
+    flushTags()
+    docBuffer.push(rawLine)
+  }
+
+  flushDoc()
+  flushTags()
+}
+
 export function formatHover(hover: Hover | null): string {
   if (!hover) return "No hover information found"
 
-  const parts: string[] = []
+  const signatures: string[] = []
+  const docs: string[] = []
+  const tags: string[] = []
 
   const addMarkedString = (ms: MarkedString) => {
     if (typeof ms === "string") {
-      parts.push(ms)
+      collectMarkdownSections(ms, signatures, docs, tags)
     } else if (ms.language) {
-      parts.push(`\`\`\`${ms.language}\n${ms.value}\n\`\`\``)
+      pushUnique(signatures, `\`\`\`${ms.language}\n${ms.value}\n\`\`\``)
     } else {
-      parts.push(ms.value)
+      collectMarkdownSections(ms.value, signatures, docs, tags)
     }
   }
 
   if (typeof hover.contents === "string") {
-    parts.push(hover.contents)
+    collectMarkdownSections(hover.contents, signatures, docs, tags)
   } else if (Array.isArray(hover.contents)) {
     for (const item of hover.contents) {
       addMarkedString(item)
     }
   } else if (typeof hover.contents === "object") {
     if ("kind" in hover.contents && "value" in hover.contents) {
-      parts.push((hover.contents as MarkupContent).value)
+      collectMarkdownSections((hover.contents as MarkupContent).value, signatures, docs, tags)
     } else {
       addMarkedString(hover.contents as MarkedString)
     }
   }
 
-  const result = parts.join("\n\n").trim()
+  const sections: string[] = []
+  if (hover.range) {
+    sections.push(`Hover range: ${formatRange(hover.range)}`)
+  }
+  if (signatures.length > 0) {
+    sections.push(`Signature:\n${signatures.join("\n\n")}`)
+  }
+  if (docs.length > 0) {
+    sections.push(`Documentation:\n${docs.join("\n\n")}`)
+  }
+  if (tags.length > 0) {
+    sections.push(`Tags:\n${tags.join("\n")}`)
+  }
+
+  const result = sections.join("\n\n").trim()
   return result || "No hover information found"
 }
