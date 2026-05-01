@@ -64,7 +64,7 @@ describe("lsp_package_symbol", () => {
     writeFixturePackage(
       root,
       "@fixture/core",
-      `export class Texture2D {\n  width: number;\n  height: number;\n}\n\nexport interface Options {\n  name: string;\n}\n`,
+      `/** Main texture type. */\nexport class Texture2D {\n  width: number;\n  height: number;\n}\n\nexport interface Options {\n  name: string;\n}\n`,
     )
 
     const result = (await lsp_package_symbol.execute(
@@ -78,9 +78,11 @@ describe("lsp_package_symbol", () => {
       {} as never,
     )) as string
 
-    expect(result).toContain("@fixture/core :: Texture2D")
+    expect(result).toContain(`Node modules root: ${join(root, "node_modules")}`)
+    expect(result).toContain("Definition: @fixture/core/index.d.ts")
     expect(result).toContain("Kind: Class")
-    expect(result).toContain("index.d.ts")
+    expect(result).toContain("Main texture type.")
+    expect(result).not.toContain("@fixture/core :: Texture2D")
   })
 
   it("returns error text when symbol is missing", async () => {
@@ -118,8 +120,8 @@ describe("lsp_package_symbol", () => {
       {} as never,
     )) as string
 
-    expect(result).toContain("@fixture/a :: Shared")
-    expect(result).toContain("@fixture/b :: Shared")
+    expect(result).toContain("Definition: @fixture/a/index.d.ts")
+    expect(result).toContain("Definition: @fixture/b/index.d.ts")
     expect(result).not.toContain("@other/c")
   })
 
@@ -139,8 +141,8 @@ describe("lsp_package_symbol", () => {
       {} as never,
     )) as string
 
-    expect(result).toContain("@regex/a :: Vec3")
-    expect(result).toContain("@regex/b :: Vec3")
+    expect(result).toContain("Definition: @regex/a/index.d.ts")
+    expect(result).toContain("Definition: @regex/b/index.d.ts")
   })
 
   it("rejects when maxPackages is exceeded", async () => {
@@ -181,7 +183,7 @@ describe("lsp_package_symbol", () => {
       {} as never,
     )) as string
 
-    expect(result).toContain("alpha :: Foo")
-    expect(result).toContain("beta :: Foo")
+    expect(result).toContain("Definition: alpha/index.d.ts")
+    expect(result).toContain("Definition: beta/index.d.ts")
   })
 })

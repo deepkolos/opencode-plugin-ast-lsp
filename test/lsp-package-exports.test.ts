@@ -66,11 +66,11 @@ describe("lsp_package_exports", () => {
     const root = createBaseProject()
     writeFixturePackage(root, "@fixture/core", {
       "index.d.ts":
-        `export class Texture2D {}\n` +
-        `export interface Options { name: string }\n` +
+        `/** Main texture type. */\nexport class Texture2D {}\n` +
+        `/** Texture creation options. */\nexport interface Options { name: string }\n` +
         `export type RGBA = [number, number, number, number];\n` +
         `export enum Wrap { Clamp, Repeat }\n` +
-        `export function createTexture(): Texture2D { return null as any }\n` +
+        `/** Creates a texture. */\nexport function createTexture(): Texture2D { return null as any }\n` +
         `export const VERSION: string = "1.0.0";\n`,
     })
 
@@ -84,10 +84,14 @@ describe("lsp_package_exports", () => {
     )) as string
 
     expect(result).toContain("Texture2D (Class)")
+    expect(result).toContain("Definition: @fixture/core/index.d.ts")
+    expect(result).toContain("Main texture type.")
     expect(result).toContain("Options (Interface)")
+    expect(result).toContain("Texture creation options.")
     expect(result).toContain("RGBA (TypeAlias)")
     expect(result).toContain("Wrap (Enum)")
     expect(result).toContain("createTexture (Function)")
+    expect(result).toContain("Creates a texture.")
     expect(result).toContain("VERSION (Variable)")
   })
 
@@ -181,6 +185,7 @@ describe("lsp_package_exports", () => {
       {} as never,
     )) as string
 
+    expect(result).toContain(`Node modules root: ${join(root, "node_modules")}`)
     expect(result).toContain("=== @fixture/a")
     expect(result).toContain("=== @fixture/b")
     expect(result).toContain("Alpha (Class)")
@@ -188,7 +193,7 @@ describe("lsp_package_exports", () => {
     expect(result).not.toContain("Gamma")
   })
 
-  it("flat output uses [pkg] prefix when groupByPackage=false", async () => {
+  it("flat output keeps relative definition paths when groupByPackage=false", async () => {
     const root = createBaseProject()
     writeFixturePackage(root, "@flat/a", {
       "index.d.ts": `export class Alpha {}\n`,
@@ -207,8 +212,8 @@ describe("lsp_package_exports", () => {
       {} as never,
     )) as string
 
-    expect(result).toContain("[@flat/a] Alpha")
-    expect(result).toContain("[@flat/b] Beta")
+    expect(result).toContain("Definition: @flat/a/index.d.ts")
+    expect(result).toContain("Definition: @flat/b/index.d.ts")
   })
 
   it("truncates to limit and reports it", async () => {

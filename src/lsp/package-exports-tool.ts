@@ -1,14 +1,17 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
+import { withLspClient } from "./lsp-client-wrapper"
+import { formatHover } from "./lsp-formatters"
 import {
   expandPackageNames,
-  getPackageDtsEntries,
-  resolvePackageRoot,
+  resolvePackage,
   scanDtsExports,
   toWorkspaceRoot,
+  toNodeModulesRelativePath,
 } from "./package-resolution"
 import type { DtsExport, UnifiedSymbolKind } from "./package-resolution"
 import { ensureLspServersInstalled } from "./server-auto-installer"
+import type { Hover } from "./types"
 
 type Strategy = "auto" | "lsp-completion" | "probe" | "dts-scan"
 
@@ -41,6 +44,9 @@ function filterExports(
 ): DtsExport[] {
   let list = items
 
+  const knownNames = new Set(list.filter((e) => e.kind !== "Unknown").map((e) => e.name))
+  list = list.filter((e) => e.kind !== "Unknown" || !knownNames.has(e.name))
+
   if (opts.includeReExports === false) {
     list = list.filter((e) => !e.isReExport)
   }
@@ -63,25 +69,77 @@ function filterExports(
   return list
 }
 
-function formatExportLine(e: DtsExport, prefix = ""): string {
+function formatFallbackHover(item: DtsExport): string | undefined {
+  const parts: string[] = []
+  if (item.signature) {
+    parts.push("```ts\n" + item.signature + "\n```")
+  }
+  if (item.documentation) {
+    parts.push(item.documentation)
+  }
+  const body = parts.join("\n\n").trim()
+  return body || undefined
+}
+
+async function tryLspHoverForExport(item: DtsExport): Promise<string | undefined> {
+  const hover = await withLspClient(item.filePath, async (client) => {
+    return (await client.hover(item.filePath, item.line, item.character)) as Hover | null
+  })
+  const body = formatHover(hover)
+  return body !== "No hover information found" ? body : undefined
+}
+
+async function enrichExportsWithHover(
+  items: DtsExport[],
+  strategy: Strategy,
+): Promise<Array<DtsExport & { hoverText?: string }>> {
+  const output = items.map((item) => ({ ...item, hoverText: formatFallbackHover(item) }))
+  if (strategy === "dts-scan") return output
+
+  const concurrency = 5
+  for (let i = 0; i < output.length; i += concurrency) {
+    const batch = output.slice(i, i + concurrency)
+    await Promise.all(
+      batch.map(async (item) => {
+        try {
+          const hoverText = await tryLspHoverForExport(item)
+          if (hoverText) item.hoverText = hoverText
+        } catch {}
+      }),
+    )
+  }
+
+  return output
+}
+
+function formatExportBlock(e: DtsExport & { hoverText?: string }, nodeModulesRoot: string | null): string {
   const tag = e.isReExport ? " [re-export]" : ""
-  return `${prefix}${e.name} (${e.kind})${tag} - ${e.filePath}:${e.line}:${e.character}`
+  const lines = [
+    `${e.name} (${e.kind})${tag}`,
+    `Definition: ${toNodeModulesRelativePath(e.filePath, nodeModulesRoot)}:${e.line}:${e.character}`,
+  ]
+  if (e.hoverText) {
+    lines.push("---")
+    lines.push(e.hoverText)
+  }
+  return lines.join("\n")
 }
 
 async function collectPackageExports(
   pkg: string,
   workspaceRoot: string,
-): Promise<{ pkg: string; items: DtsExport[]; error?: string }> {
-  const pkgRoot = resolvePackageRoot(pkg, workspaceRoot)
-  if (!pkgRoot) {
+): Promise<{ pkg: string; items: DtsExport[]; packageRoot?: string; nodeModulesRoot?: string | null; error?: string }> {
+  const resolved = resolvePackage(pkg, workspaceRoot)
+  if (!resolved) {
     return { pkg, items: [], error: "package root not resolved" }
   }
-  const entries = getPackageDtsEntries(pkgRoot)
-  if (entries.length === 0) {
-    return { pkg, items: [], error: "no .d.ts entries found" }
+  const items = scanDtsExports(resolved.entries, { includeReExports: true, packageRoot: resolved.packageRoot })
+  return {
+    pkg,
+    items,
+    packageRoot: resolved.packageRoot,
+    nodeModulesRoot: resolved.nodeModulesRoot,
   }
-  const items = scanDtsExports(entries, { includeReExports: true, packageRoot: pkgRoot })
-  return { pkg, items }
 }
 
 export const lsp_package_exports: ToolDefinition = tool({
@@ -91,8 +149,9 @@ export const lsp_package_exports: ToolDefinition = tool({
     "Use when: 'what APIs does @sar-engine/core expose?', 'list every export of packages under @scope/*', 'find exports matching Texture* in a package'. " +
     "packageName accepts: exact name, array of names, glob ('@scope/*') or regex literal ('/^@scope\\//'). " +
     "Optional filters: kinds (narrow to class/interface/function/...), query (substring match on export name), limit, groupByPackage. " +
+    "Returns each visible export with its declaration path relative to the resolved node_modules root and, when possible, full hover/JSDoc information. " +
     "Prefer this over ast_grep_search in node_modules — it is symbol-aware and won't miss re-exports or type exports. " +
-    "Not for: locating a specific symbol's declaration position (use lsp_package_symbol), or reading its signature (use lsp_hover with packageName).",
+    "Not for: locating a specific symbol's declaration position (use lsp_package_symbol), or workspace-wide usage search (use lsp_find_references).",
   args: {
     packageName: tool.schema
       .union([
@@ -127,7 +186,7 @@ export const lsp_package_exports: ToolDefinition = tool({
     try {
       await ensureLspServersInstalled()
       const workspaceRoot = toWorkspaceRoot(args.workspaceRoot)
-      const _strategy: Strategy = (args.strategy as Strategy | undefined) ?? "auto"
+      const strategy: Strategy = (args.strategy as Strategy | undefined) ?? "auto"
       const limit = args.limit ?? 200
       const maxPackages = args.maxPackages ?? 20
       const groupByPackage = args.groupByPackage ?? true
@@ -138,7 +197,12 @@ export const lsp_package_exports: ToolDefinition = tool({
       }
 
       const warnings: string[] = []
-      const collected = [] as Array<{ pkg: string; items: DtsExport[] }>
+      const collected = [] as Array<{
+        pkg: string
+        items: DtsExport[]
+        packageRoot: string
+        nodeModulesRoot: string | null
+      }>
 
       const concurrency = 5
       for (let i = 0; i < packages.length; i += concurrency) {
@@ -151,6 +215,8 @@ export const lsp_package_exports: ToolDefinition = tool({
               return {
                 pkg,
                 items: [] as DtsExport[],
+                packageRoot: undefined,
+                nodeModulesRoot: undefined,
                 error: e instanceof Error ? e.message : String(e),
               }
             }
@@ -163,8 +229,13 @@ export const lsp_package_exports: ToolDefinition = tool({
             query: args.query,
             includeReExports: args.includeReExports,
           })
-          if (filtered.length > 0) {
-            collected.push({ pkg: r.pkg, items: filtered })
+          if (filtered.length > 0 && r.packageRoot) {
+            collected.push({
+              pkg: r.pkg,
+              items: filtered,
+              packageRoot: r.packageRoot,
+              nodeModulesRoot: r.nodeModulesRoot ?? null,
+            })
           }
         }
       }
@@ -192,10 +263,16 @@ export const lsp_package_exports: ToolDefinition = tool({
         for (const group of collected) {
           if (remaining <= 0) break
           const take = Math.min(group.items.length, remaining)
+          const visible = await enrichExportsWithHover(group.items.slice(0, take), strategy)
+          const packagePath = toNodeModulesRelativePath(group.packageRoot, group.nodeModulesRoot)
           lines.push("")
-          lines.push(`=== ${group.pkg} (${group.items.length} symbols${take < group.items.length ? `, showing ${take}` : ""}) ===`)
-          for (let i = 0; i < take; i++) {
-            lines.push(formatExportLine(group.items[i]!))
+          if (group.nodeModulesRoot) {
+            lines.push(`Node modules root: ${group.nodeModulesRoot}`)
+          }
+          lines.push(`=== ${packagePath} (${group.items.length} symbols${take < group.items.length ? `, showing ${take}` : ""}) ===`)
+          for (const item of visible) {
+            lines.push("")
+            lines.push(formatExportBlock(item, group.nodeModulesRoot))
             shown++
           }
           remaining -= take
@@ -205,16 +282,24 @@ export const lsp_package_exports: ToolDefinition = tool({
           lines.push(`(Truncated: showed ${shown}/${totalAll}. Increase 'limit' or narrow 'kinds'/'query'.)`)
         }
       } else {
-        const flat: Array<{ pkg: string; item: DtsExport }> = []
+        const flat: Array<{ item: DtsExport; nodeModulesRoot: string | null }> = []
         for (const g of collected) {
-          for (const item of g.items) flat.push({ pkg: g.pkg, item })
+          for (const item of g.items) flat.push({ item, nodeModulesRoot: g.nodeModulesRoot })
         }
-        flat.sort((a, b) => a.item.name.localeCompare(b.item.name) || a.pkg.localeCompare(b.pkg))
+        flat.sort((a, b) => a.item.name.localeCompare(b.item.name) || a.item.filePath.localeCompare(b.item.filePath))
         const take = Math.min(flat.length, limit)
         lines.push(`Found ${flat.length} exports${take < flat.length ? ` (showing first ${take})` : ""}:`)
-        for (let i = 0; i < take; i++) {
-          const { pkg, item } = flat[i]!
-          lines.push(formatExportLine(item, `[${pkg}] `))
+        const visible = await enrichExportsWithHover(
+          flat.slice(0, take).map(({ item }) => item),
+          strategy,
+        )
+        for (let i = 0; i < visible.length; i++) {
+          const root = flat[i]?.nodeModulesRoot ?? null
+          lines.push("")
+          if (root) {
+            lines.push(`Node modules root: ${root}`)
+          }
+          lines.push(formatExportBlock(visible[i]!, root))
         }
       }
 

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, rmSync } from "fs"
-import { dirname, join, resolve, sep } from "path"
+import { dirname, join, relative, resolve, sep } from "path"
 import { createRequire } from "module"
 
 export type UnifiedSymbolKind =
@@ -21,6 +21,7 @@ export interface DtsExport {
   character: number
   isReExport: boolean
   signature?: string
+  documentation?: string
 }
 
 const GLOB_MATCH_CHARS = /[*?]/
@@ -180,6 +181,39 @@ export function resolvePackageRoot(packageName: string, workspaceRoot: string): 
   } catch {}
 
   return null
+}
+
+export function findNodeModulesRoot(filePath: string): string | null {
+  const marker = `${sep}node_modules${sep}`
+  const normalized = resolve(filePath)
+  const idx = normalized.lastIndexOf(marker)
+  if (idx < 0) return null
+  return normalized.slice(0, idx + marker.length - 1)
+}
+
+export function toNodeModulesRelativePath(filePath: string, nodeModulesRoot: string | null): string {
+  const absPath = resolve(filePath)
+  if (!nodeModulesRoot) return absPath
+  const relPath = relative(nodeModulesRoot, absPath)
+  return relPath && !relPath.startsWith("..") ? relPath : absPath
+}
+
+export interface PackageResolution {
+  packageRoot: string
+  nodeModulesRoot: string | null
+  entries: string[]
+}
+
+export function resolvePackage(packageName: string, workspaceRoot: string): PackageResolution | null {
+  const packageRoot = resolvePackageRoot(packageName, workspaceRoot)
+  if (!packageRoot) return null
+  const entries = getPackageDtsEntries(packageRoot)
+  if (entries.length === 0) return null
+  return {
+    packageRoot,
+    nodeModulesRoot: findNodeModulesRoot(packageRoot),
+    entries,
+  }
 }
 
 export function getPackageDtsEntries(packageRoot: string): string[] {
@@ -377,6 +411,26 @@ export function scanDtsExports(
       return firstLine.trim().slice(0, 200)
     }
 
+    const extractDocumentation = (node: import("typescript").Node): string | undefined => {
+      const text = src.getFullText()
+      const ranges = ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []
+      for (let i = ranges.length - 1; i >= 0; i--) {
+        const range = ranges[i]
+        if (!range) continue
+        const raw = text.slice(range.pos, range.end)
+        if (!raw.startsWith("/**")) continue
+        const cleaned = raw
+          .replace(/^\/\*\*?/, "")
+          .replace(/\*\/$/, "")
+          .split("\n")
+          .map((line) => line.replace(/^\s*\* ?/, "").trimEnd())
+          .join("\n")
+          .trim()
+        if (cleaned) return cleaned
+      }
+      return undefined
+    }
+
     const hasExport = (node: import("typescript").Node): boolean => {
       const mods = (ts.canHaveModifiers?.(node) ? ts.getModifiers?.(node) : undefined) as
         | readonly import("typescript").Modifier[]
@@ -411,6 +465,7 @@ export function scanDtsExports(
           character: pos.character,
           isReExport: false,
           signature: extractSignature(stmt),
+          documentation: extractDocumentation(stmt),
         })
       } else if (ts.isInterfaceDeclaration(stmt) && hasExport(stmt)) {
         const pos = posToLineCol(stmt.name.getStart(src))
@@ -422,6 +477,7 @@ export function scanDtsExports(
           character: pos.character,
           isReExport: false,
           signature: extractSignature(stmt),
+          documentation: extractDocumentation(stmt),
         })
       } else if (ts.isTypeAliasDeclaration(stmt) && hasExport(stmt)) {
         const pos = posToLineCol(stmt.name.getStart(src))
@@ -433,6 +489,7 @@ export function scanDtsExports(
           character: pos.character,
           isReExport: false,
           signature: extractSignature(stmt),
+          documentation: extractDocumentation(stmt),
         })
       } else if (ts.isEnumDeclaration(stmt) && hasExport(stmt)) {
         const pos = posToLineCol(stmt.name.getStart(src))
@@ -444,6 +501,7 @@ export function scanDtsExports(
           character: pos.character,
           isReExport: false,
           signature: extractSignature(stmt),
+          documentation: extractDocumentation(stmt),
         })
       } else if (ts.isFunctionDeclaration(stmt) && stmt.name && hasExport(stmt)) {
         const pos = posToLineCol(stmt.name.getStart(src))
@@ -455,6 +513,7 @@ export function scanDtsExports(
           character: pos.character,
           isReExport: false,
           signature: extractSignature(stmt),
+          documentation: extractDocumentation(stmt),
         })
       } else if (ts.isVariableStatement(stmt) && hasExport(stmt)) {
         for (const decl of stmt.declarationList.declarations) {
@@ -468,6 +527,7 @@ export function scanDtsExports(
               character: pos.character,
               isReExport: false,
               signature: extractSignature(stmt),
+              documentation: extractDocumentation(stmt),
             })
           }
         }
@@ -482,6 +542,7 @@ export function scanDtsExports(
             character: pos.character,
             isReExport: false,
             signature: extractSignature(stmt),
+            documentation: extractDocumentation(stmt),
           })
         }
       } else if (ts.isExportDeclaration(stmt)) {
@@ -500,6 +561,7 @@ export function scanDtsExports(
               character: pos.character,
               isReExport: !!spec,
               signature: extractSignature(el),
+              documentation: extractDocumentation(stmt),
             })
           }
         }
@@ -517,6 +579,7 @@ export function scanDtsExports(
           character: pos.character,
           isReExport: false,
           signature: extractSignature(stmt),
+          documentation: extractDocumentation(stmt),
         })
       }
     }
@@ -559,6 +622,8 @@ export interface PackageSymbolLocation {
   line: number
   character: number
   kind: UnifiedSymbolKind
+  packageRoot?: string
+  nodeModulesRoot?: string | null
 }
 
 export function resolvePackageSymbolLocations(
@@ -571,11 +636,9 @@ export function resolvePackageSymbolLocations(
   const results: PackageSymbolLocation[] = []
 
   for (const pkg of packages) {
-    const pkgRoot = resolvePackageRoot(pkg, workspaceRoot)
-    if (!pkgRoot) continue
-    const entries = getPackageDtsEntries(pkgRoot)
-    if (entries.length === 0) continue
-    const hit = findDtsSymbol(entries, symbolName)
+    const resolved = resolvePackage(pkg, workspaceRoot)
+    if (!resolved) continue
+    const hit = findDtsSymbol(resolved.entries, symbolName)
     if (!hit) continue
     results.push({
       pkg,
@@ -583,6 +646,8 @@ export function resolvePackageSymbolLocations(
       line: hit.line,
       character: hit.character,
       kind: hit.kind,
+      packageRoot: resolved.packageRoot,
+      nodeModulesRoot: resolved.nodeModulesRoot,
     })
   }
 
