@@ -30,23 +30,13 @@ bun run build
 }
 ```
 
-### 3. 安装所需的语言服务器（可选但推荐）
+### 3. 语言服务器
 
-```bash
-# TypeScript
-npm install -g typescript-language-server typescript
-
-# Python
-pip install basedpyright
-
-# Rust
-rustup component add rust-analyzer
-
-# Go
-go install golang.org/x/tools/gopls@latest
-```
+插件会自动安装内置的 TypeScript/JavaScript LSP 依赖到独立缓存目录，不需要全局安装。
 
 ## 使用示例
+
+LSP 工具返回统一 JSON envelope。优先读取 `ok`、`summary`、`data`、`hints`、`warnings`、`nextActions`、`truncated` 和 `errors` 字段。
 
 ### AST-Grep 搜索
 
@@ -57,22 +47,32 @@ go install golang.org/x/tools/gopls@latest
   - paths: ["src"]
 ```
 
-### 查找定义
+### 理解符号/API
 
 ```
-使用 lsp_goto_definition
+使用 lsp_inspect
   - filePath: "src/index.ts"
   - line: 10
   - character: 5
+  - mode: "surface"
 ```
 
-### 获取悬停提示（类型/文档）
+### 探索包或文件里的 API
 
 ```
-使用 lsp_hover
+使用 lsp_discover
+  - packageName: "@scope/pkg"
+  - query: "texture"
+```
+
+### 查看真实使用方式
+
+```
+使用 lsp_usages
   - filePath: "src/index.ts"
   - line: 10
   - character: 5
+  - contextLines: 3
 ```
 
 ### 检查错误
@@ -96,13 +96,7 @@ cargo install ast-grep --locked  # 使用 Cargo
 
 ### LSP 服务器找不到
 
-确保语言服务器已安装并且在 PATH 中。你可以通过以下命令检查：
-
-```bash
-# 检查特定服务器
-which typescript-language-server
-which pyright
-```
+插件会优先使用项目或缓存中的语言服务器。如果自动安装失败，先确认本机可以运行 `bun install`，再重试相关 LSP 工具。
 
 ### 插件无法加载
 

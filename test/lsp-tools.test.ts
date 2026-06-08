@@ -120,6 +120,10 @@ function asText(output: string | { output: string }): string {
   return typeof output === "string" ? output : output.output
 }
 
+function asJson(output: string | { output: string }): any {
+  return JSON.parse(asText(output))
+}
+
 describe("lsp tools", () => {
   it("uses real lsp_goto_definition on a TypeScript workspace", async () => {
     const { defsPath, indexPath } = createTsProject()
@@ -181,6 +185,248 @@ describe("lsp tools", () => {
     expect(output).toContain("Greets a person")
   })
 
+  it("uses real lsp_hover to include variable type members and member docs", async () => {
+    const root = createTempDir()
+    writeProjectFile(
+      root,
+      "package.json",
+      JSON.stringify({ name: "lsp-hover-members-test", private: true, type: "module" }, null, 2),
+    )
+    writeProjectFile(
+      root,
+      "tsconfig.json",
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*"],
+        },
+        null,
+        2,
+      ),
+    )
+    const indexPath = writeProjectFile(
+      root,
+      "src/index.ts",
+      [
+        "interface Texture2D {",
+        "  /** Width in pixels. */",
+        "  width: number",
+        "  /** Read texture data. */",
+        "  sample(u: number, v: number): string",
+        "}",
+        "const texture: Texture2D = null as any",
+        "texture",
+        "",
+      ].join("\n"),
+    )
+    const source = readFileSync(indexPath, "utf-8")
+    const position = findPosition(source, "texture\n")
+
+    const raw = await lsp_hover.execute(
+      { filePath: indexPath, line: position.line, character: position.character },
+      {} as never,
+    )
+    const output = asText(raw)
+    const json = asJson(raw)
+
+    expect(output).toContain("const texture: Texture2D")
+    expect(output).toContain("Members:")
+    expect(output).toContain("Methods:")
+    expect(output).toContain("sample")
+    expect(output).toContain("Read texture data.")
+    expect(output).toContain("Properties:")
+    expect(output).toContain("width")
+    expect(output).toContain("Width in pixels.")
+    expect(json.data.blocks[0].members.methods[0].name).toBe("sample")
+    expect(json.data.blocks[0].members.properties[0].name).toBe("width")
+    expect(json.data.blocks[0].memberStats.totalMembers).toBe(2)
+  }, 20000)
+
+  it("uses real lsp_hover to probe members at the hovered block scope", async () => {
+    const root = createTempDir()
+    writeProjectFile(
+      root,
+      "package.json",
+      JSON.stringify({ name: "lsp-hover-block-scope-test", private: true, type: "module" }, null, 2),
+    )
+    writeProjectFile(
+      root,
+      "tsconfig.json",
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*"],
+        },
+        null,
+        2,
+      ),
+    )
+    const indexPath = writeProjectFile(
+      root,
+      "src/index.ts",
+      [
+        "type Panel = {",
+        "  /** Panel title. */",
+        "  title: string",
+        "  /** Opens the panel. */",
+        "  open(): void",
+        "}",
+        "export function run(): void {",
+        "  if (true) {",
+        "    const panel: Panel = null as any",
+        "    panel",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    )
+    const source = readFileSync(indexPath, "utf-8")
+    const position = findPosition(source, "panel\n")
+
+    const output = asText(
+      await lsp_hover.execute(
+        { filePath: indexPath, line: position.line, character: position.character },
+        {} as never,
+      ),
+    )
+
+    expect(output).toContain("const panel: Panel")
+    expect(output).toContain("title")
+    expect(output).toContain("Panel title.")
+    expect(output).toContain("open")
+    expect(output).toContain("Opens the panel.")
+  }, 20000)
+
+  it("uses real lsp_hover to hint when member output is truncated", async () => {
+    const root = createTempDir()
+    writeProjectFile(
+      root,
+      "package.json",
+      JSON.stringify({ name: "lsp-hover-truncated-test", private: true, type: "module" }, null, 2),
+    )
+    writeProjectFile(
+      root,
+      "tsconfig.json",
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*"],
+        },
+        null,
+        2,
+      ),
+    )
+    const indexPath = writeProjectFile(
+      root,
+      "src/index.ts",
+      [
+        "type ManyMembers = {",
+        "  one: string",
+        "  two: string",
+        "  three: string",
+        "}",
+        "const many: ManyMembers = null as any",
+        "many",
+        "",
+      ].join("\n"),
+    )
+    const source = readFileSync(indexPath, "utf-8")
+    const position = findPosition(source, "many\n")
+
+    const raw = await lsp_hover.execute(
+      {
+        filePath: indexPath,
+        line: position.line,
+        character: position.character,
+        maxMembers: 1,
+      },
+      {} as never,
+    )
+    const output = asText(raw)
+    const json = asJson(raw)
+
+    expect(output).toContain("(Truncated: showed 1/3 members.)")
+    expect(output).toContain("Hint:")
+    expect(output).toContain("Read the Definition/Source file above")
+    expect(json.truncated).toBe(true)
+    expect(json.nextActions[0].type).toBe("read_file")
+    expect(json.nextActions[0].filePath).toBe(indexPath)
+  }, 20000)
+
+  it("uses real lsp_hover to hint when a named return type is not expanded", async () => {
+    const root = createTempDir()
+    writeProjectFile(
+      root,
+      "package.json",
+      JSON.stringify({ name: "lsp-hover-return-hint-test", private: true, type: "module" }, null, 2),
+    )
+    writeProjectFile(
+      root,
+      "tsconfig.json",
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*"],
+        },
+        null,
+        2,
+      ),
+    )
+    const indexPath = writeProjectFile(
+      root,
+      "src/index.ts",
+      [
+        "interface Texture2D {",
+        "  width: number",
+        "}",
+        "/** Creates a texture. */",
+        "export function createTexture(): Texture2D {",
+        "  return null as any",
+        "}",
+        "createTexture()",
+        "",
+      ].join("\n"),
+    )
+    const source = readFileSync(indexPath, "utf-8")
+    const position = findPosition(source, "createTexture()")
+
+    const output = asText(
+      await lsp_hover.execute(
+        { filePath: indexPath, line: position.line, character: position.character },
+        {} as never,
+      ),
+    )
+
+    expect(output).toContain("createTexture(): Texture2D")
+    expect(output).toContain("Hint:")
+    expect(output).toContain("named return type")
+    expect(output).toContain("Read the Definition/Source file above")
+  }, 20000)
+
   it("uses real lsp_diagnostics for directory diagnostics", async () => {
     const { srcDir, brokenPath } = createTsProject()
 
@@ -229,5 +475,31 @@ describe("lsp tools", () => {
     expect(readFileSync(defsPath, "utf-8")).toContain("function renamedGreet")
     expect(readFileSync(indexPath, "utf-8")).toContain('import { renamedGreet } from "./defs"')
     expect(readFileSync(indexPath, "utf-8")).toContain('return renamedGreet("world")')
+  })
+
+  it("uses real lsp_rename dry-run to summarize edit blast radius", async () => {
+    const { defsPath, indexPath } = createTsProject()
+    const source = readFileSync(defsPath, "utf-8")
+    const position = findPosition(source, "greet(name")
+
+    const raw = await lsp_rename.execute(
+      {
+        filePath: defsPath,
+        line: position.line,
+        character: position.character,
+        newName: "renamedGreet",
+        dryRun: true,
+      },
+      {} as never,
+    )
+    const output = asJson(raw)
+
+    expect(output.summary).toContain("Dry run rename preview")
+    expect(output.data.edit.applied).toBe(false)
+    expect(output.data.edit.totalEdits).toBeGreaterThan(0)
+    expect(output.data.edit.files).toContain(defsPath)
+    expect(output.data.edit.files).toContain(indexPath)
+    expect(readFileSync(defsPath, "utf-8")).toContain("function greet")
+    expect(readFileSync(indexPath, "utf-8")).toContain('return greet("world")')
   })
 })

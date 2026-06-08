@@ -23,13 +23,31 @@ bun run build
 
 ### LSP 工具
 
-- `lsp_goto_definition`: 跳转到符号定义位置
-- `lsp_find_references`: 查找符号的所有引用
-- `lsp_symbols`: 获取文件符号或工作区符号搜索
+- `lsp_inspect`: 理解符号/API 的定义、文档、成员、签名和相关类型
+- `lsp_discover`: 在文件、工作区或 npm 包中发现可用符号/API
+- `lsp_usages`: 查找符号引用和真实调用片段
 - `lsp_diagnostics`: 获取语言服务器的诊断信息（错误、警告等）
-- `lsp_prepare_rename`: 检查重命名是否有效
-- `lsp_rename`: 跨工作区重命名符号
-- `lsp_hover`: 获取符号的悬停提示信息（类型定义、文档注释等）
+- `lsp_rename`: 先校验再跨工作区重命名符号，支持 dry-run
+
+底层 LSP 原子能力（hover、definition、references、symbols、package exports 等）作为内部实现使用，不再注册为 agent 可见工具。agent 默认只需要在“理解 / 发现 / 查使用 / 查诊断 / 重命名”这几个意图之间选择。
+
+所有 LSP 工具输出统一为 JSON envelope 字符串：
+
+```json
+{
+  "ok": true,
+  "tool": "lsp_inspect",
+  "summary": "Inspected symbol at src/index.ts:42:10.",
+  "data": {},
+  "hints": [],
+  "warnings": [],
+  "nextActions": [],
+  "truncated": false,
+  "errors": []
+}
+```
+
+其中 `summary` 适合人类快速阅读，`data` 是 agent 应优先消费的结构化结果。
 
 ## 语言支持
 
@@ -58,13 +76,31 @@ bun run build
   - paths: ["src"]
 ```
 
-### 跳转到定义
+### 理解符号/API
 
 ```
-使用 lsp_goto_definition
+使用 lsp_inspect
   - filePath: "src/index.ts"
   - line: 42
   - character: 10
+  - mode: "surface"
+```
+
+或者直接检查包内 API：
+
+```
+使用 lsp_inspect
+  - packageName: "@scope/pkg"
+  - symbolName: "Texture2D"
+  - mode: "deep"
+```
+
+### 发现可用 API
+
+```
+使用 lsp_discover
+  - packageName: "@scope/pkg"
+  - query: "texture"
 ```
 
 ### 获取诊断信息
@@ -93,7 +129,7 @@ cargo install ast-grep --locked
 
 无需手动安装！
 
-本插件在执行 LSP 命令时（如 `lsp_goto_definition`），会自动检测并调用 `Bun` 将 `typescript-language-server` 及 `vscode-langservers-extracted` 等依赖安装至缓存目录（`~/.cache/opencode-plugin-ast-lsp/npm/`）。
+本插件在执行 LSP 命令时（如 `lsp_inspect`），会自动检测并调用 `Bun` 将 `typescript-language-server` 及 `vscode-langservers-extracted` 等依赖安装至缓存目录（`~/.cache/opencode-plugin-ast-lsp/npm/`）。
 
 这意味着即使你的项目本身没有配置 TypeScript/ESLint，该插件也能够“自带”语言服务器为你提供最精确的代码分析与重构能力。
 

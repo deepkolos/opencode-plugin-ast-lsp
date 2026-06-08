@@ -16,6 +16,18 @@ type FileDiagnostic = {
   diagnostic: Diagnostic
 }
 
+export interface DirectoryDiagnosticsResult {
+  directory: string
+  extension: string
+  filesScanned: number
+  filesCapped: boolean
+  fileErrors: { file: string; error: string }[]
+  diagnostics: FileDiagnostic[]
+  total: number
+  shown: number
+  truncated: boolean
+}
+
 function collectFilesWithExtension(dir: string, extension: string, maxFiles: number): string[] {
   const files: string[] = []
 
@@ -67,6 +79,17 @@ export async function aggregateDiagnosticsForDirectory(
   severity?: "error" | "warning" | "information" | "hint" | "all",
   maxFiles: number = DEFAULT_MAX_DIRECTORY_FILES
 ): Promise<string> {
+  return formatDirectoryDiagnostics(
+    await aggregateDiagnosticsForDirectoryStructured(directory, extension, severity, maxFiles),
+  )
+}
+
+export async function aggregateDiagnosticsForDirectoryStructured(
+  directory: string,
+  extension: string,
+  severity?: "error" | "warning" | "information" | "hint" | "all",
+  maxFiles: number = DEFAULT_MAX_DIRECTORY_FILES
+): Promise<DirectoryDiagnosticsResult> {
   if (!extension.startsWith(".")) {
     throw new Error(
       `Extension must start with a dot (e.g., ".ts", not "${extension}"). Use ".${extension}" instead.`
@@ -89,12 +112,17 @@ export async function aggregateDiagnosticsForDirectory(
   const filesToProcess = allFiles.slice(0, maxFiles)
 
   if (filesToProcess.length === 0) {
-    return [
-      `Directory: ${absDir}`,
-      `Extension: ${extension}`,
-      `Files scanned: 0`,
-      `No files found with extension "${extension}".`,
-    ].join("\n")
+    return {
+      directory: absDir,
+      extension,
+      filesScanned: 0,
+      filesCapped: wasCapped,
+      fileErrors: [],
+      diagnostics: [],
+      total: 0,
+      shown: 0,
+      truncated: false,
+    }
   }
 
   const root = findWorkspaceRoot(absDir)
@@ -130,28 +158,42 @@ export async function aggregateDiagnosticsForDirectory(
   const displayDiagnostics = allDiagnostics.slice(0, DEFAULT_MAX_DIAGNOSTICS)
   const wasDiagCapped = allDiagnostics.length > DEFAULT_MAX_DIAGNOSTICS
 
+  return {
+    directory: absDir,
+    extension,
+    filesScanned: filesToProcess.length,
+    filesCapped: wasCapped,
+    fileErrors,
+    diagnostics: displayDiagnostics,
+    total: allDiagnostics.length,
+    shown: displayDiagnostics.length,
+    truncated: wasDiagCapped,
+  }
+}
+
+function formatDirectoryDiagnostics(result: DirectoryDiagnosticsResult): string {
   const lines: string[] = [
-    `Directory: ${absDir}`,
-    `Extension: ${extension}`,
-    `Files scanned: ${filesToProcess.length}${wasCapped ? ` (capped at ${maxFiles})` : ""}`,
-    `Files with errors: ${fileErrors.length}`,
-    `Total diagnostics: ${allDiagnostics.length}`,
+    `Directory: ${result.directory}`,
+    `Extension: ${result.extension}`,
+    `Files scanned: ${result.filesScanned}${result.filesCapped ? ` (capped)` : ""}`,
+    `Files with errors: ${result.fileErrors.length}`,
+    `Total diagnostics: ${result.total}`,
   ]
 
-  if (fileErrors.length > 0) {
+  if (result.fileErrors.length > 0) {
     lines.push("", "File processing errors:")
-    for (const { file, error } of fileErrors) {
+    for (const { file, error } of result.fileErrors) {
       lines.push(`  ${file}: ${error}`)
     }
   }
 
-  if (displayDiagnostics.length > 0) {
+  if (result.diagnostics.length > 0) {
     lines.push("")
-    for (const { filePath, diagnostic } of displayDiagnostics) {
+    for (const { filePath, diagnostic } of result.diagnostics) {
       lines.push(`${filePath}: ${formatDiagnostic(diagnostic)}`)
     }
-    if (wasDiagCapped) {
-      lines.push("", `... (${allDiagnostics.length - DEFAULT_MAX_DIAGNOSTICS} more diagnostics not shown)`)
+    if (result.truncated) {
+      lines.push("", `... (${result.total - result.shown} more diagnostics not shown)`)
     }
   }
 

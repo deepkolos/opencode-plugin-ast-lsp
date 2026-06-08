@@ -141,9 +141,12 @@ export class LSPClient extends LSPClientConnection {
     character: number,
     triggerKind?: number,
     triggerCharacter?: string,
+    syncFromDisk = true,
   ): Promise<unknown> {
     const absPath = resolve(filePath)
-    await this.openFile(absPath)
+    if (syncFromDisk) {
+      await this.openFile(absPath)
+    }
     const params: Record<string, unknown> = {
       textDocument: { uri: pathToFileURL(absPath).href },
       position: { line: line - 1, character },

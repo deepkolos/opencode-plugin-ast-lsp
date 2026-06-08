@@ -11,6 +11,7 @@ import {
 } from "./package-resolution"
 import type { DtsExport } from "./package-resolution"
 import { ensureLspServersInstalled } from "./server-auto-installer"
+import { errorResult, okResult, type LocationRef } from "./tool-result"
 import type { Hover } from "./types"
 
 type Strategy = "auto" | "lsp-completion" | "probe" | "dts-scan"
@@ -20,6 +21,32 @@ interface PackageHit {
   match: DtsExport
   nodeModulesRoot: string | null
   hoverText?: string
+}
+
+interface PackageSymbolData {
+  input: {
+    packageName: string | string[]
+    symbolName: string
+    includeHover: boolean
+  }
+  matches: Array<{
+    packageName: string
+    symbol: {
+      name: string
+      kind: string
+      displayName: string
+      kindLabel: string
+      definition: string
+      location: LocationRef
+      signature?: string
+      documentation?: string
+      hoverText?: string
+      isReExport: boolean
+    }
+    nodeModulesRoot: string | null
+    nodeModulesRootLabel?: string
+  }>
+  total: number
 }
 
 async function locateInPackage(
@@ -124,7 +151,7 @@ export const lsp_package_symbol: ToolDefinition = tool({
 
       const packages = expandPackageNames(args.packageName, workspaceRoot, maxPackages)
       if (packages.length === 0) {
-        return `No packages matched "${Array.isArray(args.packageName) ? args.packageName.join(", ") : args.packageName}"`
+        return errorResult("lsp_package_symbol", `No packages matched "${Array.isArray(args.packageName) ? args.packageName.join(", ") : args.packageName}"`)
       }
 
       const hits: PackageHit[] = []
@@ -151,16 +178,46 @@ export const lsp_package_symbol: ToolDefinition = tool({
       if (hits.length === 0) {
         const pkgList = packages.join(", ")
         const base = `Symbol "${args.symbolName}" not found in: ${pkgList}`
-        return warnings.length ? `${base}\n\nWarnings:\n${warnings.join("\n")}` : base
+        return errorResult("lsp_package_symbol", base, { warnings })
       }
 
       hits.sort((a, b) => a.pkg.localeCompare(b.pkg))
-      const header = packages.length > 1 ? `Matched ${hits.length}/${packages.length} package(s):\n` : ""
-      const body = hits.map(formatHit).join("\n\n")
-      const tail = warnings.length ? `\n\nWarnings:\n${warnings.join("\n")}` : ""
-      return header + body + tail
+      return okResult<PackageSymbolData>(
+        "lsp_package_symbol",
+        `Matched ${hits.length}/${packages.length} package(s).`,
+        {
+          input: {
+            packageName: args.packageName,
+            symbolName: args.symbolName,
+            includeHover,
+          },
+          matches: hits.map((hit) => ({
+            packageName: hit.pkg,
+            symbol: {
+              name: hit.match.name,
+              kind: hit.match.kind,
+              displayName: `${hit.match.name} (${hit.match.kind})`,
+              kindLabel: `Kind: ${hit.match.kind}`,
+              definition: `Definition: ${toNodeModulesRelativePath(hit.match.filePath, hit.nodeModulesRoot)}:${hit.match.line}:${hit.match.character}`,
+              location: {
+                filePath: toNodeModulesRelativePath(hit.match.filePath, hit.nodeModulesRoot),
+                line: hit.match.line,
+                character: hit.match.character,
+              },
+              signature: hit.match.signature,
+              documentation: hit.match.documentation,
+              hoverText: hit.hoverText,
+              isReExport: hit.match.isReExport,
+            },
+            nodeModulesRoot: hit.nodeModulesRoot,
+            nodeModulesRootLabel: hit.nodeModulesRoot ? `Node modules root: ${hit.nodeModulesRoot}` : undefined,
+          })),
+          total: hits.length,
+        },
+        { warnings },
+      )
     } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
+      return errorResult("lsp_package_symbol", e instanceof Error ? e.message : String(e))
     }
   },
 })

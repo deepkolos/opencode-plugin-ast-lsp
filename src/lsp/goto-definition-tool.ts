@@ -1,13 +1,30 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
-import { formatLocation } from "./lsp-formatters"
 import { withLspClient } from "./lsp-client-wrapper"
 import {
   resolvePackageSymbolLocations,
   toWorkspaceRoot,
 } from "./package-resolution"
 import { ensureLspServersInstalled } from "./server-auto-installer"
+import { errorResult, locationToRef, okResult, type LocationRef } from "./tool-result"
 import type { Location, LocationLink } from "./types"
+
+interface DefinitionData {
+  input: {
+    filePath?: string
+    line?: number
+    character?: number
+    packageName?: string | string[]
+    symbolName?: string
+  }
+  definitions: Array<{
+    packageName?: string
+    label?: string
+    locations: LocationRef[]
+    declaration?: LocationRef
+  }>
+  total: number
+}
 
 export const lsp_goto_definition: ToolDefinition = tool({
   description:
@@ -37,7 +54,7 @@ export const lsp_goto_definition: ToolDefinition = tool({
     try {
       if (args.packageName) {
         if (!args.symbolName) {
-          return "Error: symbolName is required when packageName is provided"
+          return errorResult("lsp_goto_definition", "symbolName is required when packageName is provided")
         }
         await ensureLspServersInstalled()
         const workspaceRoot = toWorkspaceRoot(args.workspaceRoot)
@@ -52,15 +69,11 @@ export const lsp_goto_definition: ToolDefinition = tool({
           const names = Array.isArray(args.packageName)
             ? args.packageName.join(", ")
             : args.packageName
-          return `Symbol "${args.symbolName}" not found in package(s) matching: ${names}`
+          return errorResult("lsp_goto_definition", `Symbol "${args.symbolName}" not found in package(s) matching: ${names}`)
         }
 
-        const notePrefix =
-          args.filePath || args.line !== undefined || args.character !== undefined
-            ? "Note: filePath/line/character ignored because packageName was provided.\n\n"
-            : ""
-
-        const lines: string[] = []
+        const definitions: DefinitionData["definitions"] = []
+        const warnings: string[] = []
         for (const loc of locations) {
           const tsLocations = await withLspClient(loc.filePath, async (client) => {
             return (await client.definition(loc.filePath, loc.line, loc.character)) as
@@ -71,23 +84,46 @@ export const lsp_goto_definition: ToolDefinition = tool({
           }).catch(() => null)
 
           if (!tsLocations || (Array.isArray(tsLocations) && tsLocations.length === 0)) {
-            lines.push(
-              `${loc.pkg} :: ${args.symbolName}\n` +
-                `${loc.filePath}:${loc.line}:${loc.character} (declaration)`,
-            )
+            definitions.push({
+              packageName: loc.pkg,
+              label: `${loc.pkg} :: ${args.symbolName}`,
+              locations: [],
+              declaration: { filePath: loc.filePath, line: loc.line, character: loc.character },
+            })
             continue
           }
 
           const asArray = Array.isArray(tsLocations) ? tsLocations : [tsLocations]
-          const formatted = asArray.map(formatLocation).join("\n")
-          lines.push(`${loc.pkg} :: ${args.symbolName}\n${formatted}`)
+          definitions.push({
+            packageName: loc.pkg,
+            label: `${loc.pkg} :: ${args.symbolName}`,
+            locations: asArray.map(locationToRef),
+            declaration: { filePath: loc.filePath, line: loc.line, character: loc.character },
+          })
         }
 
-        return notePrefix + lines.join("\n\n")
+        if (args.filePath || args.line !== undefined || args.character !== undefined) {
+          warnings.push("filePath/line/character ignored because packageName was provided.")
+        }
+
+        const total = definitions.reduce((sum, item) => sum + item.locations.length + (item.declaration && item.locations.length === 0 ? 1 : 0), 0)
+        return okResult<DefinitionData>(
+          "lsp_goto_definition",
+          `Found ${total} definition location(s).`,
+          {
+            input: {
+              packageName: args.packageName,
+              symbolName: args.symbolName,
+            },
+            definitions,
+            total,
+          },
+          { warnings },
+        )
       }
 
       if (!args.filePath || args.line === undefined || args.character === undefined) {
-        return "Error: provide either packageName + symbolName, or filePath + line + character"
+        return errorResult("lsp_goto_definition", "provide either packageName + symbolName, or filePath + line + character")
       }
 
       const result = await withLspClient(args.filePath, async (client) => {
@@ -99,17 +135,33 @@ export const lsp_goto_definition: ToolDefinition = tool({
       })
 
       if (!result) {
-        return "No definition found"
+        return okResult<DefinitionData>("lsp_goto_definition", "No definition found.", {
+          input: { filePath: args.filePath, line: args.line, character: args.character },
+          definitions: [],
+          total: 0,
+        })
       }
 
       const locations = Array.isArray(result) ? result : [result]
       if (locations.length === 0) {
-        return "No definition found"
+        return okResult<DefinitionData>("lsp_goto_definition", "No definition found.", {
+          input: { filePath: args.filePath, line: args.line, character: args.character },
+          definitions: [],
+          total: 0,
+        })
       }
 
-      return locations.map(formatLocation).join("\n")
+      return okResult<DefinitionData>(
+        "lsp_goto_definition",
+        `Found ${locations.length} definition location(s).`,
+        {
+          input: { filePath: args.filePath, line: args.line, character: args.character },
+          definitions: [{ locations: locations.map(locationToRef) }],
+          total: locations.length,
+        },
+      )
     } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
+      return errorResult("lsp_goto_definition", e instanceof Error ? e.message : String(e))
     }
   },
 })

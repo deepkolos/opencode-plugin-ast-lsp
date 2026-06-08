@@ -11,6 +11,7 @@ import {
 } from "./package-resolution"
 import type { DtsExport, UnifiedSymbolKind } from "./package-resolution"
 import { ensureLspServersInstalled } from "./server-auto-installer"
+import { errorResult, okResult, type LocationRef } from "./tool-result"
 import type { Hover } from "./types"
 
 type Strategy = "auto" | "lsp-completion" | "probe" | "dts-scan"
@@ -32,6 +33,37 @@ const KIND_FILTER_MAP: Record<KindFilter, UnifiedSymbolKind[]> = {
   function: ["Function"],
   variable: ["Variable"],
   namespace: ["Namespace"],
+}
+
+interface PackageExportsData {
+  input: {
+    packageName: string | string[]
+    query?: string
+    kinds?: string[]
+    includeReExports?: boolean
+  }
+  packages: Array<{
+    packageName: string
+    groupLabel?: string
+    packageRoot: string
+    nodeModulesRoot: string | null
+    nodeModulesRootLabel?: string
+    symbols: Array<{
+      name: string
+      kind: string
+      displayName: string
+      definition: string
+      location: LocationRef
+      signature?: string
+      documentation?: string
+      hoverText?: string
+      isReExport: boolean
+    }>
+    total: number
+    shown: number
+  }>
+  total: number
+  shown: number
 }
 
 function filterExports(
@@ -193,7 +225,7 @@ export const lsp_package_exports: ToolDefinition = tool({
 
       const packages = expandPackageNames(args.packageName, workspaceRoot, maxPackages)
       if (packages.length === 0) {
-        return `No packages matched "${Array.isArray(args.packageName) ? args.packageName.join(", ") : args.packageName}"`
+        return errorResult("lsp_package_exports", `No packages matched "${Array.isArray(args.packageName) ? args.packageName.join(", ") : args.packageName}"`)
       }
 
       const warnings: string[] = []
@@ -242,7 +274,22 @@ export const lsp_package_exports: ToolDefinition = tool({
 
       if (collected.length === 0) {
         const base = `No exports found for "${Array.isArray(args.packageName) ? args.packageName.join(", ") : args.packageName}"`
-        return warnings.length ? `${base}\n\nWarnings:\n${warnings.join("\n")}` : base
+        return okResult<PackageExportsData>(
+          "lsp_package_exports",
+          base,
+          {
+            input: {
+              packageName: args.packageName,
+              query: args.query,
+              kinds: args.kinds as string[] | undefined,
+              includeReExports: args.includeReExports,
+            },
+            packages: [],
+            total: 0,
+            shown: 0,
+          },
+          { warnings },
+        )
       }
 
       collected.sort((a, b) => a.pkg.localeCompare(b.pkg))
@@ -252,34 +299,41 @@ export const lsp_package_exports: ToolDefinition = tool({
 
       const totalAll = collected.reduce((sum, g) => sum + g.items.length, 0)
 
-      const lines: string[] = []
-      if (packages.length > 1) {
-        lines.push(`Matched ${collected.length}/${packages.length} package(s), ${totalAll} symbol(s) total.`)
-      }
+      const packageResults: PackageExportsData["packages"] = []
+      let shown = 0
 
       if (groupByPackage) {
         let remaining = limit
-        let shown = 0
         for (const group of collected) {
           if (remaining <= 0) break
           const take = Math.min(group.items.length, remaining)
           const visible = await enrichExportsWithHover(group.items.slice(0, take), strategy)
-          const packagePath = toNodeModulesRelativePath(group.packageRoot, group.nodeModulesRoot)
-          lines.push("")
-          if (group.nodeModulesRoot) {
-            lines.push(`Node modules root: ${group.nodeModulesRoot}`)
-          }
-          lines.push(`=== ${packagePath} (${group.items.length} symbols${take < group.items.length ? `, showing ${take}` : ""}) ===`)
-          for (const item of visible) {
-            lines.push("")
-            lines.push(formatExportBlock(item, group.nodeModulesRoot))
-            shown++
-          }
+          packageResults.push({
+            packageName: group.pkg,
+            groupLabel: `=== ${toNodeModulesRelativePath(group.packageRoot, group.nodeModulesRoot)}`,
+            packageRoot: group.packageRoot,
+            nodeModulesRoot: group.nodeModulesRoot,
+            nodeModulesRootLabel: group.nodeModulesRoot ? `Node modules root: ${group.nodeModulesRoot}` : undefined,
+            total: group.items.length,
+            shown: visible.length,
+            symbols: visible.map((item) => ({
+              name: item.name,
+              kind: item.kind,
+              displayName: `${item.name} (${item.kind})`,
+              definition: `Definition: ${toNodeModulesRelativePath(item.filePath, group.nodeModulesRoot)}:${item.line}:${item.character}`,
+              location: {
+                filePath: toNodeModulesRelativePath(item.filePath, group.nodeModulesRoot),
+                line: item.line,
+                character: item.character,
+              },
+              signature: item.signature,
+              documentation: item.documentation,
+              hoverText: item.hoverText,
+              isReExport: item.isReExport,
+            })),
+          })
+          shown += visible.length
           remaining -= take
-        }
-        if (shown < totalAll) {
-          lines.push("")
-          lines.push(`(Truncated: showed ${shown}/${totalAll}. Increase 'limit' or narrow 'kinds'/'query'.)`)
         }
       } else {
         const flat: Array<{ item: DtsExport; nodeModulesRoot: string | null }> = []
@@ -288,30 +342,60 @@ export const lsp_package_exports: ToolDefinition = tool({
         }
         flat.sort((a, b) => a.item.name.localeCompare(b.item.name) || a.item.filePath.localeCompare(b.item.filePath))
         const take = Math.min(flat.length, limit)
-        lines.push(`Found ${flat.length} exports${take < flat.length ? ` (showing first ${take})` : ""}:`)
         const visible = await enrichExportsWithHover(
           flat.slice(0, take).map(({ item }) => item),
           strategy,
         )
-        for (let i = 0; i < visible.length; i++) {
-          const root = flat[i]?.nodeModulesRoot ?? null
-          lines.push("")
-          if (root) {
-            lines.push(`Node modules root: ${root}`)
-          }
-          lines.push(formatExportBlock(visible[i]!, root))
-        }
+        shown = visible.length
+        packageResults.push({
+          packageName: "flat",
+          packageRoot: "",
+          nodeModulesRoot: null,
+          total: flat.length,
+          shown: visible.length,
+          symbols: visible.map((item, i) => {
+            const root = flat[i]?.nodeModulesRoot ?? null
+            return {
+              name: item.name,
+              kind: item.kind,
+              displayName: `${item.name} (${item.kind})`,
+              definition: `Definition: ${toNodeModulesRelativePath(item.filePath, root)}:${item.line}:${item.character}`,
+              location: {
+                filePath: toNodeModulesRelativePath(item.filePath, root),
+                line: item.line,
+                character: item.character,
+              },
+              signature: item.signature,
+              documentation: item.documentation,
+              hoverText: item.hoverText,
+              isReExport: item.isReExport,
+            }
+          }),
+        })
       }
 
-      if (warnings.length) {
-        lines.push("")
-        lines.push("Warnings:")
-        for (const w of warnings) lines.push(w)
-      }
-
-      return lines.join("\n").trim()
+      return okResult<PackageExportsData>(
+        "lsp_package_exports",
+        `Found ${totalAll} export(s), showing ${shown}.`,
+        {
+          input: {
+            packageName: args.packageName,
+            query: args.query,
+            kinds: args.kinds as string[] | undefined,
+            includeReExports: args.includeReExports,
+          },
+          packages: packageResults,
+          total: totalAll,
+          shown,
+        },
+        {
+          warnings,
+          truncated: shown < totalAll,
+          hints: shown < totalAll ? ["Increase limit or narrow kinds/query for more exports."] : [],
+        },
+      )
     } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
+      return errorResult("lsp_package_exports", e instanceof Error ? e.message : String(e))
     }
   },
 })

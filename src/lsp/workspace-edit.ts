@@ -10,6 +10,66 @@ export interface ApplyResult {
   errors: string[]
 }
 
+export interface WorkspaceEditSummary {
+  totalEdits: number
+  files: string[]
+  fileOperations: Array<{
+    kind: "create" | "rename" | "delete"
+    filePath: string
+    oldFilePath?: string
+  }>
+}
+
+function pushUniqueFile(files: string[], filePath: string): void {
+  if (!files.includes(filePath)) files.push(filePath)
+}
+
+export function summarizeWorkspaceEdit(edit: WorkspaceEdit | null): WorkspaceEditSummary {
+  const summary: WorkspaceEditSummary = {
+    totalEdits: 0,
+    files: [],
+    fileOperations: [],
+  }
+
+  if (!edit) return summary
+
+  if (edit.changes) {
+    for (const [uri, edits] of Object.entries(edit.changes)) {
+      const filePath = uriToPath(uri)
+      summary.totalEdits += edits.length
+      pushUniqueFile(summary.files, filePath)
+    }
+  }
+
+  if (edit.documentChanges) {
+    for (const change of edit.documentChanges) {
+      if ("kind" in change) {
+        if (change.kind === "create") {
+          const filePath = uriToPath(change.uri)
+          pushUniqueFile(summary.files, filePath)
+          summary.fileOperations.push({ kind: "create", filePath })
+        } else if (change.kind === "rename") {
+          const oldFilePath = uriToPath(change.oldUri)
+          const filePath = uriToPath(change.newUri)
+          pushUniqueFile(summary.files, oldFilePath)
+          pushUniqueFile(summary.files, filePath)
+          summary.fileOperations.push({ kind: "rename", filePath, oldFilePath })
+        } else if (change.kind === "delete") {
+          const filePath = uriToPath(change.uri)
+          pushUniqueFile(summary.files, filePath)
+          summary.fileOperations.push({ kind: "delete", filePath })
+        }
+      } else {
+        const filePath = uriToPath(change.textDocument.uri)
+        summary.totalEdits += change.edits.length
+        pushUniqueFile(summary.files, filePath)
+      }
+    }
+  }
+
+  return summary
+}
+
 function applyTextEditsToFile(filePath: string, edits: TextEdit[]): { success: boolean; editCount: number; error?: string } {
   try {
     let content = readFileSync(filePath, "utf-8")

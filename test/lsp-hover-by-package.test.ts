@@ -51,6 +51,24 @@ function createBaseProject(): string {
     "package.json",
     JSON.stringify({ name: "lsp-hover-pkg-test", private: true }, null, 2),
   )
+  writeProjectFile(
+    root,
+    "tsconfig.json",
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: "ES2022",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          strict: true,
+          noEmit: true,
+        },
+        include: ["src/**/*", ".trae-probe/**/*"],
+      },
+      null,
+      2,
+    ),
+  )
   return root
 }
 
@@ -74,7 +92,10 @@ describe("lsp_hover by packageName", () => {
         " * @deprecated Use NewTexture2D.",
         " */",
         "export class Texture2D {",
+        "  /** Width in pixels. */",
         "  width: number;",
+        "  /** Samples a texel. */",
+        "  sample(u: number, v: number): string;",
         "  height: number;",
         "}",
         "",
@@ -101,6 +122,13 @@ describe("lsp_hover by packageName", () => {
     expect(output).toContain("Tags:")
     expect(output).toContain("@deprecated")
     expect(output).toContain("NewTexture2D")
+    expect(output).toContain("Members:")
+    expect(output).toContain("Properties:")
+    expect(output).toContain("width")
+    expect(output).toContain("Width in pixels.")
+    expect(output).toContain("Methods:")
+    expect(output).toContain("sample")
+    expect(output).toContain("Samples a texel.")
   }, 20000)
 
   it("returns friendly message when symbol is missing", async () => {

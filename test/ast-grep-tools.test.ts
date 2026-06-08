@@ -43,6 +43,14 @@ function createToolContext() {
   }
 }
 
+function outputToText(output: Awaited<ReturnType<ReturnType<typeof createAstGrepTools>[string]["execute"]>>): string {
+  return typeof output === "string" ? output : output.output
+}
+
+function outputToJson(output: Awaited<ReturnType<ReturnType<typeof createAstGrepTools>[string]["execute"]>>) {
+  return JSON.parse(outputToText(output))
+}
+
 describe("createAstGrepTools", () => {
   it("uses real ast_grep_search and returns hint for unmatched python pattern", async () => {
     const projectDir = createTempDir()
@@ -57,10 +65,15 @@ describe("createAstGrepTools", () => {
       },
       context as never,
     )
-    const outputText = typeof output === "string" ? output : output.output
+    const outputText = outputToText(output)
+    const result = outputToJson(output)
 
-    expect(outputText).toContain("No matches found")
-    expect(outputText).toContain('Hint: Remove trailing colon. Try: "def $FUNC($$$)"')
+    expect(result.ok).toBe(true)
+    expect(result.tool).toBe("ast_grep_search")
+    expect(result.summary).toBe("No matches found.")
+    expect(result.data.total).toBe(0)
+    expect(result.data.matches).toEqual([])
+    expect(result.hints).toContain('Hint: Remove trailing colon. Try: "def $FUNC($$$)"')
     expect(metadataCalls[0]?.metadata.output).toBe(outputText)
   })
 
@@ -83,12 +96,47 @@ describe("createAstGrepTools", () => {
       },
       context as never,
     )
-    const outputText = typeof output === "string" ? output : output.output
+    const outputText = outputToText(output)
+    const result = outputToJson(output)
 
-    expect(outputText).toContain("1 replacement(s):")
-    expect(outputText).toContain(filePath)
+    expect(result.ok).toBe(true)
+    expect(result.tool).toBe("ast_grep_replace")
+    expect(result.summary).toBe("1 replacement(s) applied.")
+    expect(result.data.applied).toBe(true)
+    expect(result.data.total).toBe(1)
+    expect(result.data.input.rewrite).toBe("logger.info($MSG)")
+    expect(result.data.rewriteTemplate).toBe("logger.info($MSG)")
+    expect(result.data.afterTextReliable).toBe(false)
+    expect(result.data.matches[0].filePath).toBe(filePath)
+    expect(result.data.matches[0].text).toBe("console.log(value)")
     expect(readFileSync(filePath, "utf-8")).toContain("logger.info(value)")
     expect(readFileSync(filePath, "utf-8")).not.toContain("console.log(value)")
     expect(metadataCalls[0]?.metadata.output).toBe(outputText)
+  })
+
+  it("defaults ast_grep_replace to dry-run and preserves source files", async () => {
+    const projectDir = createTempDir()
+    const filePath = writeProjectFile(
+      projectDir,
+      "src/index.ts",
+      "const value = 1;\nconsole.log(value);\n",
+    )
+
+    const tools = createAstGrepTools(createPluginInput(projectDir))
+    const { context } = createToolContext()
+    const output = await tools.ast_grep_replace.execute(
+      {
+        pattern: "console.log($MSG)",
+        rewrite: "logger.info($MSG)",
+        lang: "typescript",
+      },
+      context as never,
+    )
+    const result = outputToJson(output)
+
+    expect(result.summary).toBe("1 replacement(s) would be made.")
+    expect(result.data.applied).toBe(false)
+    expect(result.hints).toContain("Review data.matches, then rerun with dryRun=false to apply these replacements.")
+    expect(readFileSync(filePath, "utf-8")).toContain("console.log(value)")
   })
 })

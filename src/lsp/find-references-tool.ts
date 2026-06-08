@@ -1,14 +1,34 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import { DEFAULT_MAX_REFERENCES } from "./constants"
-import { formatLocation } from "./lsp-formatters"
 import { withLspClient } from "./lsp-client-wrapper"
 import {
   resolvePackageSymbolLocations,
   toWorkspaceRoot,
 } from "./package-resolution"
 import { ensureLspServersInstalled } from "./server-auto-installer"
+import { errorResult, locationToRef, okResult, type LocationRef } from "./tool-result"
 import type { Location } from "./types"
+
+interface ReferencesData {
+  input: {
+    filePath?: string
+    line?: number
+    character?: number
+    packageName?: string | string[]
+    symbolName?: string
+    includeDeclaration: boolean
+  }
+  references: Array<{
+    packageName?: string
+    label?: string
+    locations: LocationRef[]
+    total: number
+    shown: number
+  }>
+  total: number
+  shown: number
+}
 
 export const lsp_find_references: ToolDefinition = tool({
   description:
@@ -39,7 +59,7 @@ export const lsp_find_references: ToolDefinition = tool({
     try {
       if (args.packageName) {
         if (!args.symbolName) {
-          return "Error: symbolName is required when packageName is provided"
+          return errorResult("lsp_find_references", "symbolName is required when packageName is provided")
         }
         await ensureLspServersInstalled()
         const workspaceRoot = toWorkspaceRoot(args.workspaceRoot)
@@ -54,16 +74,14 @@ export const lsp_find_references: ToolDefinition = tool({
           const names = Array.isArray(args.packageName)
             ? args.packageName.join(", ")
             : args.packageName
-          return `Symbol "${args.symbolName}" not found in package(s) matching: ${names}`
+          return errorResult("lsp_find_references", `Symbol "${args.symbolName}" not found in package(s) matching: ${names}`)
         }
 
-        const notePrefix =
-          args.filePath || args.line !== undefined || args.character !== undefined
-            ? "Note: filePath/line/character ignored because packageName was provided.\n\n"
-            : ""
-
-        const blocks: string[] = []
+        const warnings: string[] = []
         const includeDeclaration = args.includeDeclaration ?? true
+        const references: ReferencesData["references"] = []
+        let totalAll = 0
+        let shownAll = 0
 
         for (const loc of locations) {
           let refs: Location[] | null = null
@@ -77,34 +95,55 @@ export const lsp_find_references: ToolDefinition = tool({
               )) as Location[] | null
             })
           } catch (e) {
-            blocks.push(
-              `=== ${loc.pkg} :: ${args.symbolName} ===\n` +
-                `Error: ${e instanceof Error ? e.message : String(e)}`,
-            )
+            warnings.push(`[${loc.pkg}] ${e instanceof Error ? e.message : String(e)}`)
             continue
           }
 
-          const header = `=== ${loc.pkg} :: ${args.symbolName} ===`
           if (!refs || refs.length === 0) {
-            blocks.push(`${header}\nNo references found`)
+            references.push({ packageName: loc.pkg, label: `=== ${loc.pkg} :: ${args.symbolName} ===`, locations: [], total: 0, shown: 0 })
             continue
           }
 
           const total = refs.length
           const truncated = total > DEFAULT_MAX_REFERENCES
           const limited = truncated ? refs.slice(0, DEFAULT_MAX_REFERENCES) : refs
-          const lines = limited.map(formatLocation)
-          const prefix = truncated
-            ? `Found ${total} references (showing first ${DEFAULT_MAX_REFERENCES}):`
-            : `Found ${total} reference(s):`
-          blocks.push(`${header}\n${prefix}\n${lines.join("\n")}`)
+          totalAll += total
+          shownAll += limited.length
+          references.push({
+            packageName: loc.pkg,
+            label: `=== ${loc.pkg} :: ${args.symbolName} ===`,
+            locations: limited.map(locationToRef),
+            total,
+            shown: limited.length,
+          })
         }
 
-        return notePrefix + blocks.join("\n\n")
+        if (args.filePath || args.line !== undefined || args.character !== undefined) {
+          warnings.push("filePath/line/character ignored because packageName was provided.")
+        }
+
+        return okResult<ReferencesData>(
+          "lsp_find_references",
+          `Found ${totalAll} reference(s), showing ${shownAll}.`,
+          {
+            input: {
+              packageName: args.packageName,
+              symbolName: args.symbolName,
+              includeDeclaration,
+            },
+            references,
+            total: totalAll,
+            shown: shownAll,
+          },
+          {
+            warnings,
+            truncated: shownAll < totalAll,
+          },
+        )
       }
 
       if (!args.filePath || args.line === undefined || args.character === undefined) {
-        return "Error: provide either packageName + symbolName, or filePath + line + character"
+        return errorResult("lsp_find_references", "provide either packageName + symbolName, or filePath + line + character")
       }
 
       const result = await withLspClient(args.filePath, async (client) => {
@@ -117,19 +156,40 @@ export const lsp_find_references: ToolDefinition = tool({
       })
 
       if (!result || result.length === 0) {
-        return "No references found"
+        return okResult<ReferencesData>("lsp_find_references", "No references found.", {
+          input: {
+            filePath: args.filePath,
+            line: args.line,
+            character: args.character,
+            includeDeclaration: args.includeDeclaration ?? true,
+          },
+          references: [],
+          total: 0,
+          shown: 0,
+        })
       }
 
       const total = result.length
       const truncated = total > DEFAULT_MAX_REFERENCES
       const limited = truncated ? result.slice(0, DEFAULT_MAX_REFERENCES) : result
-      const lines = limited.map(formatLocation)
-      if (truncated) {
-        lines.unshift(`Found ${total} references (showing first ${DEFAULT_MAX_REFERENCES}):`)
-      }
-      return lines.join("\n")
+      return okResult<ReferencesData>(
+        "lsp_find_references",
+        `Found ${total} reference(s), showing ${limited.length}.`,
+        {
+          input: {
+            filePath: args.filePath,
+            line: args.line,
+            character: args.character,
+            includeDeclaration: args.includeDeclaration ?? true,
+          },
+          references: [{ locations: limited.map(locationToRef), total, shown: limited.length }],
+          total,
+          shown: limited.length,
+        },
+        { truncated },
+      )
     } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
+      return errorResult("lsp_find_references", e instanceof Error ? e.message : String(e))
     }
   },
 })

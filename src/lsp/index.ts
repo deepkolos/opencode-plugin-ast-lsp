@@ -7,13 +7,9 @@ export * from "./lsp-client-wrapper"
 export * from "./lsp-formatters"
 export * from "./workspace-edit"
 export {
-  lsp_goto_definition,
-  lsp_find_references,
-  lsp_symbols,
+  lsp_inspect,
+  lsp_discover,
+  lsp_usages,
   lsp_diagnostics,
-  lsp_prepare_rename,
   lsp_rename,
-  lsp_hover,
-  lsp_package_symbol,
-  lsp_package_exports,
 } from "./tools"

@@ -1,9 +1,55 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import { DEFAULT_MAX_SYMBOLS } from "./constants"
-import { formatDocumentSymbol, formatSymbolInfo } from "./lsp-formatters"
+import { formatSymbolKind } from "./lsp-formatters"
 import { withLspClient } from "./lsp-client-wrapper"
+import { errorResult, locationToRef, okResult, type LocationRef } from "./tool-result"
 import type { DocumentSymbol, SymbolInfo } from "./types"
+
+interface SymbolSummary {
+  name: string
+  kind: string
+  displayName: string
+  location?: LocationRef
+  children?: SymbolSummary[]
+  containerName?: string
+}
+
+interface SymbolsData {
+  input: {
+    filePath: string
+    scope: "document" | "workspace"
+    query?: string
+  }
+  symbols: SymbolSummary[]
+  total: number
+  shown: number
+}
+
+function documentSymbolToSummary(symbol: DocumentSymbol): SymbolSummary {
+  return {
+    name: symbol.name,
+    kind: formatSymbolKind(symbol.kind),
+    displayName: `${symbol.name} (${formatSymbolKind(symbol.kind)})`,
+    location: {
+      filePath: "",
+      line: symbol.range.start.line + 1,
+      character: symbol.range.start.character,
+      range: symbol.range,
+    },
+    children: symbol.children?.map(documentSymbolToSummary),
+  }
+}
+
+function symbolInfoToSummary(symbol: SymbolInfo): SymbolSummary {
+  return {
+    name: symbol.name,
+    kind: formatSymbolKind(symbol.kind),
+    displayName: `${symbol.name} (${formatSymbolKind(symbol.kind)})`,
+    location: locationToRef(symbol.location),
+    containerName: symbol.containerName,
+  }
+}
 
 export const lsp_symbols: ToolDefinition = tool({
   description:
@@ -28,7 +74,7 @@ export const lsp_symbols: ToolDefinition = tool({
 
       if (scope === "workspace") {
         if (!args.query) {
-          return "Error: 'query' is required for workspace scope"
+          return errorResult("lsp_symbols", "'query' is required for workspace scope")
         }
 
         const result = await withLspClient(args.filePath, async (client) => {
@@ -36,25 +82,41 @@ export const lsp_symbols: ToolDefinition = tool({
         })
 
         if (!result || result.length === 0) {
-          return "No symbols found"
+          return okResult<SymbolsData>("lsp_symbols", "No symbols found.", {
+            input: { filePath: args.filePath, scope, query: args.query },
+            symbols: [],
+            total: 0,
+            shown: 0,
+          })
         }
 
         const total = result.length
         const limit = Math.min(args.limit ?? DEFAULT_MAX_SYMBOLS, DEFAULT_MAX_SYMBOLS)
         const truncated = total > limit
         const limited = result.slice(0, limit)
-        const lines = limited.map(formatSymbolInfo)
-        if (truncated) {
-          lines.unshift(`Found ${total} symbols (showing first ${limit}):`)
-        }
-        return lines.join("\n")
+        return okResult<SymbolsData>(
+          "lsp_symbols",
+          `Found ${total} workspace symbol(s), showing ${limited.length}.`,
+          {
+            input: { filePath: args.filePath, scope, query: args.query },
+            symbols: limited.map(symbolInfoToSummary),
+            total,
+            shown: limited.length,
+          },
+          { truncated },
+        )
       } else {
         const result = await withLspClient(args.filePath, async (client) => {
           return (await client.documentSymbols(args.filePath)) as DocumentSymbol[] | SymbolInfo[] | null
         })
 
         if (!result || result.length === 0) {
-          return "No symbols found"
+          return okResult<SymbolsData>("lsp_symbols", "No symbols found.", {
+            input: { filePath: args.filePath, scope },
+            symbols: [],
+            total: 0,
+            shown: 0,
+          })
         }
 
         const total = result.length
@@ -62,20 +124,26 @@ export const lsp_symbols: ToolDefinition = tool({
         const truncated = total > limit
         const limited = truncated ? result.slice(0, limit) : result
 
-        const lines: string[] = []
-        if (truncated) {
-          lines.push(`Found ${total} symbols (showing first ${limit}):`)
+        const symbols = "range" in limited[0]
+          ? (limited as DocumentSymbol[]).map(documentSymbolToSummary)
+          : (limited as SymbolInfo[]).map(symbolInfoToSummary)
+        for (const symbol of symbols) {
+          if (symbol.location && !symbol.location.filePath) symbol.location.filePath = args.filePath
         }
-
-        if ("range" in limited[0]) {
-          lines.push(...(limited as DocumentSymbol[]).map((s) => formatDocumentSymbol(s)))
-        } else {
-          lines.push(...(limited as SymbolInfo[]).map(formatSymbolInfo))
-        }
-        return lines.join("\n")
+        return okResult<SymbolsData>(
+          "lsp_symbols",
+          `Found ${total} document symbol(s), showing ${limited.length}.`,
+          {
+            input: { filePath: args.filePath, scope },
+            symbols,
+            total,
+            shown: limited.length,
+          },
+          { truncated },
+        )
       }
     } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
+      return errorResult("lsp_symbols", e instanceof Error ? e.message : String(e))
     }
   },
 })
