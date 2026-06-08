@@ -4,31 +4,41 @@
   "author": "deepkolos",
   "packageManager": "bun@1.3.5",
   "main": "dist/index.js",
+  "bin": {
+    "ast-lsp": "dist/cli.js"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
   "dependencies": {
     "@opencode-ai/plugin": "^1.4.0",
+    "typescript": "^6.0.3",
     "vscode-jsonrpc": "^8.2.0"
   },
   "devDependencies": {
     "bun-types": "1.3.11",
-    "typescript": "^6.0.3",
     "typescript-language-server": "^5.1.3",
     "vscode-langservers-extracted": "^4.10.0"
   },
-  "description": "Standalone OpenCode plugin providing AST-grep and LSP tools",
+  "description": "Standalone AST-grep and LSP tools for OpenCode and Bun CLI",
   "files": [
     "dist"
   ],
   "keywords": [
     "opencode",
+    "cli",
     "plugin",
     "ast-grep",
     "lsp"
   ],
   "license": "MIT",
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external typescript && tsc --emitDeclarationOnly",
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external typescript && bun build src/cli.ts --outfile dist/cli.js --target bun --format esm --external typescript && tsc --emitDeclarationOnly",
     "clean": "rm -rf dist",
-    "test": "bun test"
+    "pack:local": "node ./scripts/pack-local.cjs",
+    "test": "bun test",
+    "test:bunx:pack": "bun run build && AST_LSP_CLI_TEST_MODE=bunx-pack bun test test/cli.test.ts",
+    "test:npx:pack": "bun run build && AST_LSP_CLI_TEST_MODE=npx-pack bun test test/cli.test.ts"
   },
   "type": "module",
   "types": "dist/index.d.ts"
