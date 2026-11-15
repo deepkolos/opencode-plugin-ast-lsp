@@ -9,6 +9,14 @@ let packedCliTarballPath: string | undefined
 
 type CliTestMode = "source" | "bunx-pack" | "npx-pack"
 const CLI_TEST_TIMEOUT_MS = 60000
+const SOURCE_CLI_ENTRY_PERF_SAMPLE_COUNT = 3
+
+interface CliRunResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+  durationMs: number
+}
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -40,6 +48,31 @@ function getCliTestMode(): CliTestMode {
   if (process.env.AST_LSP_CLI_TEST_MODE === "bunx-pack") return "bunx-pack"
   if (process.env.AST_LSP_CLI_TEST_MODE === "npx-pack") return "npx-pack"
   return "source"
+}
+
+function getCliEntryPerfBudgetMs(): number {
+  const override = process.env.AST_LSP_CLI_ENTRY_PERF_BUDGET_MS
+  if (override) {
+    const parsed = Number(override)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+
+  const mode = getCliTestMode()
+  if (mode === "source") return 2500
+  if (mode === "bunx-pack") return 20000
+  return 30000
+}
+
+function formatDurationMs(durationMs: number): string {
+  return `${durationMs.toFixed(1)}ms`
+}
+
+function summarizeDurations(samples: number[]): { min: number; max: number; avg: number } {
+  return {
+    min: Math.min(...samples),
+    max: Math.max(...samples),
+    avg: samples.reduce((sum, sample) => sum + sample, 0) / samples.length,
+  }
 }
 
 async function getPackedCliTarballPath(): Promise<string> {
@@ -79,7 +112,7 @@ async function getPackedCliTarballPath(): Promise<string> {
   return packedCliTarballPath
 }
 
-async function runCli(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runCli(args: string[]): Promise<CliRunResult> {
   const mode = getCliTestMode()
   const cleanCwd = createTempDir()
   const command = mode === "source"
@@ -87,6 +120,7 @@ async function runCli(args: string[]): Promise<{ exitCode: number; stdout: strin
     : mode === "bunx-pack"
     ? ["bunx", "--bun", "--package", await getPackedCliTarballPath(), "ast-lsp", ...args]
     : ["npx", "--yes", "--loglevel", "error", "--package", await getPackedCliTarballPath(), "ast-lsp", ...args]
+  const start = performance.now()
   const proc = Bun.spawn(command, {
     cwd: mode === "source" ? process.cwd() : cleanCwd,
     stdout: "pipe",
@@ -101,10 +135,38 @@ async function runCli(args: string[]): Promise<{ exitCode: number; stdout: strin
     new Response(proc.stderr).text(),
     proc.exited,
   ])
-  return { exitCode, stdout, stderr }
+  return { exitCode, stdout, stderr, durationMs: performance.now() - start }
 }
 
 describe("CLI", () => {
+  it("keeps lightweight entrypoints within the startup budget", async () => {
+    const mode = getCliTestMode()
+    const budgetMs = getCliEntryPerfBudgetMs()
+    const sampleCount = mode === "source" ? SOURCE_CLI_ENTRY_PERF_SAMPLE_COUNT : 1
+    const scenarios = [
+      { name: "help", args: ["--help"] },
+      { name: "list-tools", args: ["list-tools", "--json"] },
+    ]
+
+    const summaries: string[] = []
+    for (const scenario of scenarios) {
+      const samples: number[] = []
+      for (let i = 0; i < sampleCount; i++) {
+        const result = await runCli(scenario.args)
+        expect(result.exitCode).toBe(0)
+        samples.push(result.durationMs)
+      }
+
+      const summary = summarizeDurations(samples)
+      summaries.push(
+        `${scenario.name}: min=${formatDurationMs(summary.min)}, avg=${formatDurationMs(summary.avg)}, max=${formatDurationMs(summary.max)}`,
+      )
+      expect(summary.max).toBeLessThanOrEqual(budgetMs)
+    }
+
+    console.log(`CLI entry timings (${mode}, budget=${formatDurationMs(budgetMs)}): ${summaries.join("; ")}`)
+  }, CLI_TEST_TIMEOUT_MS)
+
   it("lists public tools as JSON", async () => {
     const result = await runCli(["list-tools", "--json"])
     const output = JSON.parse(result.stdout)

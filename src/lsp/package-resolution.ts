@@ -370,9 +370,9 @@ function loadTs(): typeof import("typescript") | null {
 
 export function scanDtsExports(
   entryFiles: string[],
-  opts: { includeReExports?: boolean; packageRoot?: string } = {},
+  opts: { includeReExports?: boolean; packageRoot?: string; typescript?: typeof import("typescript") } = {},
 ): DtsExport[] {
-  const ts = loadTs()
+  const ts = opts.typescript ?? loadTs()
   if (!ts) return []
 
   const seen = new Set<string>()

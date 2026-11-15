@@ -1,6 +1,6 @@
 # Standalone AST & LSP Tools
 
-独立的 AST-Grep 和 LSP 工具集，同时提供 OpenCode 插件入口和 Bun CLI 入口。OpenCode 可以作为插件使用，其他 code agent 可以通过 CLI 调用同一批工具。
+独立的 AST-Grep 和 LSP 工具集，提供 OpenCode 插件、Bun CLI 和 Node/Bun 包声明发现 SDK。OpenCode 可以作为插件使用，其他 code agent 可以通过 CLI 调用同一批工具。
 
 ## 安装
 
@@ -53,6 +53,27 @@ bunx --bun --package opencode-plugin-ast-lsp ast-lsp list-tools --json
 ```bash
 npx --yes --package opencode-plugin-ast-lsp ast-lsp list-tools --json
 ```
+
+### Node/Bun SDK
+
+`opencode-plugin-ast-lsp/sdk` 支持 Node.js 18+ 和 Bun，通过已安装的包声明发现符号。SDK 不需要 OpenCode 的 PluginInput，不安装或启动语言服务器，也不调用包管理器。ESM 和 CommonJS 使用相同接口：
+
+```ts
+import { discoverPackages } from "opencode-plugin-ast-lsp/sdk"
+// CommonJS: const { discoverPackages } = require("opencode-plugin-ast-lsp/sdk")
+
+const result = discoverPackages({
+  workspaceRoot: process.cwd(),
+  packageName: ["@scope/core", "@scope/platform"],
+  limit: 5000,
+})
+
+for (const pkg of result.packages) {
+  console.log(pkg.packageName, pkg.symbols)
+}
+```
+
+`packageName` 支持包名、数组、glob 和正则字面量；`query` 按符号名称过滤，`kinds` 过滤符号类别。`limit` 是每包上限（默认 200，范围 1–5000），`maxPackages` 限制匹配包数（默认 20，范围 1–500）。结果包含符号的声明位置、签名、文档，以及 `total`、`shown`、`warnings` 和 `truncated`。SDK 沿用 `lsp_discover` 的包声明扫描器与结果格式；文件/工作区模式继续使用 LSP。
 
 ## 功能
 
